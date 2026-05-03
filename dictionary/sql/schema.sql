@@ -101,7 +101,8 @@ WITH RECURSIVE component_tree AS (
     JOIN glyphs component
         ON component.glyph = json_each.value
         OR component.token = json_each.value
-    WHERE instr(tree.path, '|' || component.token || '|') = 0
+    WHERE parent.kind != 'unicode'
+      AND instr(tree.path, '|' || component.token || '|') = 0
 )
 SELECT
     root_glyph_id,
@@ -121,4 +122,5 @@ SELECT tree.*
 FROM glyph_component_tree tree
 JOIN glyphs component
     ON component.id = tree.component_glyph_id
-WHERE json_array_length(COALESCE(component.decomp_components, '[]')) = 0;
+WHERE component.kind = 'unicode'
+   OR json_array_length(COALESCE(component.decomp_components, '[]')) = 0;
