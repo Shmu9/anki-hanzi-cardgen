@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_UNIHAN_DIR = ROOT / "data" / "Unihan"
 DEFAULT_DECOMP_PATH = ROOT / "data" / "decomposition" / "ids.txt"
 DEFAULT_HANZI_DB_PATH = ROOT / "data" / "hanzi_db.csv"
+DEFAULT_KDEFINITION_SUPPLEMENT_PATH = ROOT / "data" / "kdefinition_supplement.csv"
 DEFAULT_SCHEMA_PATH = ROOT / "sql" / "schema.sql"
 DEFAULT_OUTPUT = ROOT / "dict.sqlite3"
 UNIHAN_VARIANTS_FILENAME = "Unihan_Variants.txt"
@@ -263,6 +264,48 @@ def load_unihan(conn: sqlite3.Connection, unihan_dir: Path) -> None:
                 )
 
 
+def load_kdefinition_supplement(conn: sqlite3.Connection, supplement_path: Path) -> int:
+    """Fill missing kDefinition values from manually reviewed component meanings."""
+    if not supplement_path.exists():
+        conn.execute(
+            "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+            ("kdefinition_supplement_status", "missing"),
+        )
+        return 0
+
+    conn.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+        ("kdefinition_supplement_source", str(supplement_path)),
+    )
+
+    inserted_count = 0
+    with supplement_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            glyph = (row.get("glyph") or "").strip()
+            component_meaning = (row.get("component_meaning") or "").strip()
+            if not glyph or not component_meaning:
+                continue
+
+            glyph_id = ensure_glyph(conn, glyph)
+            cursor = conn.execute(
+                """
+                UPDATE glyphs
+                SET k_definition = ?
+                WHERE id = ?
+                  AND k_definition IS NULL
+                """,
+                (component_meaning, glyph_id),
+            )
+            inserted_count += cursor.rowcount
+
+    conn.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+        ("kdefinition_supplement_inserted_count", str(inserted_count)),
+    )
+    return inserted_count
+
+
 def resolve_simplified_japanese_readings(conn: sqlite3.Connection, unihan_dir: Path) -> int:
     """Copy kJapanese from traditional variants when simplified rows lack it."""
     variants_path = unihan_dir / UNIHAN_VARIANTS_FILENAME
@@ -375,6 +418,7 @@ def insert_build_metadata(conn: sqlite3.Connection, args: argparse.Namespace) ->
         "unihan_dir": str(args.unihan_dir),
         "decomposition_path": str(args.decomposition),
         "hanzi_db_path": str(args.hanzi_db),
+        "kdefinition_supplement_path": str(args.kdefinition_supplement),
         "schema_path": str(args.schema),
         "frequency_rank_note": "frequency_rank and hsk_level are imported from hanzi_db.csv when a character is present there",
     }
@@ -394,6 +438,7 @@ def build_database(args: argparse.Namespace) -> None:
         with conn:
             insert_build_metadata(conn, args)
             load_unihan(conn, args.unihan_dir)
+            load_kdefinition_supplement(conn, args.kdefinition_supplement)
             resolve_simplified_japanese_readings(conn, args.unihan_dir)
             load_decompositions(conn, args.decomposition)
             load_hanzi_db(conn, args.hanzi_db)
@@ -409,6 +454,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--unihan-dir", type=Path, default=DEFAULT_UNIHAN_DIR)
     parser.add_argument("--decomposition", type=Path, default=DEFAULT_DECOMP_PATH)
     parser.add_argument("--hanzi-db", type=Path, default=DEFAULT_HANZI_DB_PATH)
+    parser.add_argument("--kdefinition-supplement", type=Path, default=DEFAULT_KDEFINITION_SUPPLEMENT_PATH)
     parser.add_argument("--schema", type=Path, default=DEFAULT_SCHEMA_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     return parser.parse_args()
