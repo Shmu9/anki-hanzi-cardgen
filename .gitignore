@@ -1,0 +1,6 @@
+dictionary/archive/*
+dictionary/data/*
+dictionary/dict.sqlite3
+.venv/
+*/__pycache__/
+.DS_Store
