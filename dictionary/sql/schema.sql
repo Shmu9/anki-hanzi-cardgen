@@ -125,6 +125,14 @@ JOIN glyphs component
 WHERE component.kind = 'unicode'
    OR json_array_length(COALESCE(component.decomp_components, '[]')) = 0;
 
+CREATE VIEW glyph_base_components_with_definition AS
+SELECT tree.*
+FROM glyph_component_tree tree
+JOIN glyphs component
+    ON component.id = tree.component_glyph_id
+WHERE (component.kind = 'unicode' AND component.k_definition IS NOT NULL)
+   OR json_array_length(COALESCE(component.decomp_components, '[]')) = 0;
+
 CREATE VIEW glyph_base_component_summary AS
 SELECT
     root_glyph,
@@ -132,4 +140,4 @@ SELECT
     component_token,
     position,
     depth
-FROM glyph_base_components;
+FROM glyph_base_components_with_definition;
