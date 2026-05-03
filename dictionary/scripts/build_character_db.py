@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a SQLite character/glyph database from Unihan and CJK decomposition data.
+"""Build a SQLite character/glyph database from Unihan and IDS decomposition data.
 
 The generated database keeps a convenient denormalized `glyphs` row for each
 Unicode character/radical/stroke or decomposition-only intermediate shape.
@@ -19,13 +19,29 @@ from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_UNIHAN_DIR = ROOT / "data" / "Unihan"
-DEFAULT_DECOMP_PATH = ROOT / "data" / "decomposition" / "cjk-decomp.txt"
+DEFAULT_DECOMP_PATH = ROOT / "data" / "decomposition" / "ids.txt"
 DEFAULT_HANZI_DB_PATH = ROOT / "data" / "hanzi_db.csv"
 DEFAULT_SCHEMA_PATH = ROOT / "sql" / "schema.sql"
 DEFAULT_OUTPUT = ROOT / "dict.sqlite3"
 UNIHAN_VARIANTS_FILENAME = "Unihan_Variants.txt"
 
-DECOMP_RE = re.compile(r"^(?P<head>[^:]+):(?P<type>[^()]*)\((?P<components>.*)\)$")
+IDS_OPERATORS = {
+    "⿰": 2,
+    "⿱": 2,
+    "⿲": 3,
+    "⿳": 3,
+    "⿴": 2,
+    "⿵": 2,
+    "⿶": 2,
+    "⿷": 2,
+    "⿸": 2,
+    "⿹": 2,
+    "⿺": 2,
+    "⿻": 2,
+}
+
+IDS_REGION_PREFERENCE = ("J", "T", "K", "V", "G", "H", "M", "P", "U", "B", "S")
+IDS_VARIANT_RE = re.compile(r"\[(?P<regions>[A-Z]+)\]$")
 
 SUMMARY_FIELD_COLUMNS = {
     "kDefinition": "k_definition",
@@ -114,12 +130,6 @@ def parse_source_metadata(path: Path) -> dict[str, str]:
     return metadata
 
 
-def split_components(raw_components: str) -> list[str]:
-    if not raw_components:
-        return []
-    return [component.strip() for component in raw_components.split(",") if component.strip()]
-
-
 def optional_int(value: str | None) -> int | None:
     if value is None:
         return None
@@ -137,6 +147,83 @@ def parse_variant_targets(value: str) -> list[str]:
         if target.startswith("U+"):
             targets.append(target.upper())
     return targets
+
+
+def strip_ids_variant_tag(expression: str) -> tuple[str, str | None]:
+    match = IDS_VARIANT_RE.search(expression)
+    if not match:
+        return expression, None
+    return expression[: match.start()], match.group("regions")
+
+
+def choose_ids_expression(expressions: list[str]) -> str | None:
+    parsed_expressions = [strip_ids_variant_tag(expression.strip()) for expression in expressions]
+    parsed_expressions = [
+        (expression, regions)
+        for expression, regions in parsed_expressions
+        if expression
+    ]
+    if not parsed_expressions:
+        return None
+
+    for preferred_region in IDS_REGION_PREFERENCE:
+        for expression, regions in parsed_expressions:
+            if regions and preferred_region in regions:
+                return expression
+
+    for expression, regions in parsed_expressions:
+        if regions is None:
+            return expression
+
+    return parsed_expressions[0][0]
+
+
+def parse_ids_expression(expression: str, start: int = 0) -> tuple[str, str | None, list[str], int]:
+    if start >= len(expression):
+        raise ValueError(f"Unexpected end of IDS expression: {expression!r}")
+
+    char = expression[start]
+    arity = IDS_OPERATORS.get(char)
+    if arity is None:
+        return char, None, [], start + 1
+
+    components: list[str] = []
+    index = start + 1
+    for _ in range(arity):
+        component, _, _, index = parse_ids_expression(expression, index)
+        components.append(component)
+
+    return expression[start:index], char, components, index
+
+
+def store_ids_decomposition(conn: sqlite3.Connection, source_token: str, expression: str) -> None:
+    parsed_expression, decomp_type, components, index = parse_ids_expression(expression)
+    if index != len(expression):
+        raise ValueError(f"Trailing data in IDS expression {expression!r} at index {index}")
+
+    glyph_id = ensure_glyph(conn, source_token)
+    if parsed_expression != expression or not decomp_type:
+        return
+
+    for component in components:
+        ensure_glyph(conn, component)
+        if component and component[0] in IDS_OPERATORS:
+            store_ids_decomposition(conn, component, component)
+
+    conn.execute(
+        """
+        UPDATE glyphs
+        SET
+            decomp_type = ?,
+            decomp_components = ?
+        WHERE id = ?
+        """,
+        (
+            decomp_type,
+            json.dumps(components, ensure_ascii=False),
+            glyph_id,
+        ),
+    )
 
 
 def reset_database(path: Path) -> None:
@@ -223,38 +310,34 @@ def load_decompositions(conn: sqlite3.Connection, decomp_path: Path) -> None:
         "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
         ("decomposition_source", str(decomp_path)),
     )
+    conn.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+        ("decomposition_format", "ids"),
+    )
 
     with decomp_path.open("r", encoding="utf-8") as handle:
         for line_number, raw_line in enumerate(handle, start=1):
-            line = raw_line.strip()
+            line = raw_line.rstrip("\n")
             if not line or line.startswith("#"):
                 continue
-            match = DECOMP_RE.match(line)
-            if not match:
-                raise ValueError(f"Malformed decomposition at {decomp_path}:{line_number}: {line}")
 
-            glyph_id = ensure_glyph(conn, match.group("head"))
-            decomp_type = match.group("type")
-            raw_components = match.group("components")
-            components = split_components(raw_components)
+            fields = line.split("\t")
+            if len(fields) < 3:
+                raise ValueError(f"Malformed IDS decomposition at {decomp_path}:{line_number}: {line}")
 
-            for component in components:
-                ensure_glyph(conn, component)
+            token, glyph, *expressions = fields
+            ensure_glyph(conn, token)
+            ensure_glyph(conn, glyph)
+            expression = choose_ids_expression(expressions)
+            if expression is None or expression == glyph:
+                continue
 
-            conn.execute(
-                """
-                UPDATE glyphs
-                SET
-                    decomp_type = ?,
-                    decomp_components = ?
-                WHERE id = ?
-                """,
-                (
-                    decomp_type,
-                    json.dumps(components, ensure_ascii=False),
-                    glyph_id,
-                ),
-            )
+            try:
+                store_ids_decomposition(conn, token, expression)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Malformed IDS expression at {decomp_path}:{line_number}: {line}"
+                ) from exc
 
 
 def load_hanzi_db(conn: sqlite3.Connection, hanzi_db_path: Path) -> None:

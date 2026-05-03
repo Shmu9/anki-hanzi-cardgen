@@ -58,9 +58,9 @@ WHERE kind = 'unicode';
 -- Recursive component expansion.
 --
 -- Base components for a character:
---   SELECT * FROM glyph_base_components WHERE root_glyph = '漢';
+--   SELECT * FROM glyph_base_component_summary WHERE root_glyph = '漢';
 --
--- Components at a specified depth:
+-- Full component tree/debug details at a specified depth:
 --   SELECT * FROM glyph_component_tree WHERE root_glyph = '漢' AND depth = 2;
 CREATE VIEW glyph_component_tree AS
 WITH RECURSIVE component_tree AS (
@@ -124,3 +124,12 @@ JOIN glyphs component
     ON component.id = tree.component_glyph_id
 WHERE component.kind = 'unicode'
    OR json_array_length(COALESCE(component.decomp_components, '[]')) = 0;
+
+CREATE VIEW glyph_base_component_summary AS
+SELECT
+    root_glyph,
+    component_glyph,
+    component_token,
+    position,
+    depth
+FROM glyph_base_components;
