@@ -23,6 +23,7 @@ DEFAULT_DECOMP_PATH = ROOT / "data" / "decomposition" / "cjk-decomp.txt"
 DEFAULT_HANZI_DB_PATH = ROOT / "data" / "hanzi_db.csv"
 DEFAULT_SCHEMA_PATH = ROOT / "sql" / "schema.sql"
 DEFAULT_OUTPUT = ROOT / "dict.sqlite3"
+UNIHAN_VARIANTS_FILENAME = "Unihan_Variants.txt"
 
 DECOMP_RE = re.compile(r"^(?P<head>[^:]+):(?P<type>[^()]*)\((?P<components>.*)\)$")
 
@@ -128,6 +129,16 @@ def optional_int(value: str | None) -> int | None:
     return int(value)
 
 
+def parse_variant_targets(value: str) -> list[str]:
+    """Return plain Unihan tokens from a variant field value."""
+    targets: list[str] = []
+    for raw_target in value.split():
+        target = raw_target.split("<", 1)[0]
+        if target.startswith("U+"):
+            targets.append(target.upper())
+    return targets
+
+
 def reset_database(path: Path) -> None:
     for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
         if candidate.exists():
@@ -163,6 +174,48 @@ def load_unihan(conn: sqlite3.Connection, unihan_dir: Path) -> None:
                     f"UPDATE glyphs SET {column} = ? WHERE id = ?",
                     (value, glyph_id),
                 )
+
+
+def resolve_simplified_japanese_readings(conn: sqlite3.Connection, unihan_dir: Path) -> int:
+    """Copy kJapanese from traditional variants when simplified rows lack it."""
+    variants_path = unihan_dir / UNIHAN_VARIANTS_FILENAME
+    if not variants_path.exists():
+        return 0
+
+    resolved_count = 0
+    for simplified_token, field, value in parse_unihan_lines(variants_path):
+        if field != "kTraditionalVariant":
+            continue
+
+        simplified_id = ensure_glyph(conn, simplified_token)
+        simplified_row = conn.execute(
+            "SELECT k_japanese FROM glyphs WHERE id = ?",
+            (simplified_id,),
+        ).fetchone()
+        if simplified_row is None or simplified_row[0]:
+            continue
+
+        for traditional_token in parse_variant_targets(value):
+            traditional_id = ensure_glyph(conn, traditional_token)
+            traditional_row = conn.execute(
+                "SELECT k_japanese FROM glyphs WHERE id = ?",
+                (traditional_id,),
+            ).fetchone()
+            if traditional_row is None or not traditional_row[0]:
+                continue
+
+            conn.execute(
+                "UPDATE glyphs SET k_japanese = ? WHERE id = ?",
+                (traditional_row[0], simplified_id),
+            )
+            resolved_count += 1
+            break
+
+    conn.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
+        ("resolved_simplified_k_japanese_count", str(resolved_count)),
+    )
+    return resolved_count
 
 
 def load_decompositions(conn: sqlite3.Connection, decomp_path: Path) -> None:
@@ -258,6 +311,7 @@ def build_database(args: argparse.Namespace) -> None:
         with conn:
             insert_build_metadata(conn, args)
             load_unihan(conn, args.unihan_dir)
+            resolve_simplified_japanese_readings(conn, args.unihan_dir)
             load_decompositions(conn, args.decomposition)
             load_hanzi_db(conn, args.hanzi_db)
         conn.execute("PRAGMA optimize")
