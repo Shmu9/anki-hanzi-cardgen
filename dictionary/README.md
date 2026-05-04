@@ -31,11 +31,6 @@ regional component forms, such as `艹` instead of `卄` for characters like
 glyphs that do not have a Unihan `kDefinition`. During database generation,
 these values fill `k_definition` only when that field is still empty.
 
-- `scripts/scrape_wiktionary_definitions.py` can fetch candidate fallback
-definitions from English Wiktionary for glyphs listed in
-`meaning_unavailable_constituents.csv`. It writes a review CSV and caches raw
-API responses under `data/wiktionary_cache/`.
-
 ## Regenerating
 Once the files specified under **Data Sources** are downloaded into the directories specified by **Layout**, run the python script.
 
@@ -63,19 +58,6 @@ python3 dictionary/scripts/build_character_db.py \
   --kdefinition-supplement dictionary/data/kdefinition_supplement.csv \
   --output dictionary/dict.sqlite3
 ```
-
-To gather Wiktionary fallback candidates for the most-used missing
-constituents:
-
-```bash
-python3 dictionary/scripts/scrape_wiktionary_definitions.py \
-  --min-uses 10 \
-  --output wiktionary_constituent_definitions.csv \
-  --verbose
-```
-
-Use `--limit N` for a small test run. The generated definitions are candidates
-for review; they are not imported into `k_definition` automatically.
 
 When multiple IDS expressions are available for the same glyph, the builder
 prefers Japanese-tagged forms first, then other CJK regional forms, then
