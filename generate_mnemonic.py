@@ -1,6 +1,7 @@
 import argparse
 import json
 import sqlite3
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 MODEL_NAME = "gemma4:e4b"
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_DB_PATH = Path(__file__).resolve().parent / "dictionary" / "dict.sqlite3"
+DEFAULT_MAX_NEW_TOKENS = 1000
 
 
 def get_constituent_meanings(character, db_path=DEFAULT_DB_PATH):
@@ -94,27 +96,36 @@ Target character meaning: {target_meaning}
 Use only these constituent meanings as the building blocks:
 {constituent_text}
 
-Think step-by-step to create a mnemonic sentence that is grammatically correct. Do not invent extra radicals or components. Radicals/components meanings should be in italics, and the target character meaning should be in bold.
+Think briefly to create a mnemonic sentence that is grammatically correct. Do not invent extra radicals or components.
+Radicals/components meanings should be in italics, and the target character meaning should be in bold.
+Ensure the Radicals/components themselves are included in brackets () without italics.
 
 Example 1:
 钞 / 鈔 (money) has constituents 钅 (metal; gold; money) and 少 (few; little).
-Mnemonic: A small piece of *metal* is shaved into a *few* tiny valuable bits, becoming **money**.
+Mnemonic: A small piece of *metal* (钅)is shaved into a *few* (少) tiny valuable bits, becoming **money**.
 
 Example 2:
 乖 (disobedient; rebellious) has constituents 千 (thousand) and 北 (north).
-A *thousand* people decided to **disobey/rebel** against the government and fight back against *North* Korea. And it worked! Here we see the thousand piercing the North!
+A *thousand* (千) people decided to **disobey/rebel** against the government and fight back against *North* (北) Korea. And it worked! Here we see the thousand piercing the North!
 
 Mnemonic for "{character}":"""
 
 
-def call_ollama(prompt, model_name=MODEL_NAME, ollama_url=DEFAULT_OLLAMA_URL, max_new_tokens=100):
+def call_ollama(
+    prompt,
+    model_name=MODEL_NAME,
+    ollama_url=DEFAULT_OLLAMA_URL,
+    max_new_tokens=DEFAULT_MAX_NEW_TOKENS,
+    think=True,
+    show_thinking=True,
+):
     """Generate text from Ollama's local HTTP API."""
     endpoint = f"{ollama_url.rstrip('/')}/api/generate"
     payload = {
         "model": model_name,
         "prompt": prompt,
-        "stream": False,
-        "think": False,
+        "stream": think,
+        "think": think,
         "options": {
             "temperature": 0.7,
             "num_predict": max_new_tokens,
@@ -129,6 +140,43 @@ def call_ollama(prompt, model_name=MODEL_NAME, ollama_url=DEFAULT_OLLAMA_URL, ma
 
     try:
         with urllib.request.urlopen(request, timeout=120) as response:
+            if think:
+                thinking_parts = []
+                response_parts = []
+                done_reason = None
+                for line in response:
+                    if not line.strip():
+                        continue
+                    data = json.loads(line.decode("utf-8"))
+                    if "error" in data:
+                        raise RuntimeError(f"Ollama error: {data['error']}")
+
+                    thinking = data.get("thinking", "")
+                    if thinking:
+                        if show_thinking and not thinking_parts:
+                            print("Thinking:", file=sys.stdout)
+                        if show_thinking:
+                            print(thinking, end="", file=sys.stdout, flush=True)
+                        thinking_parts.append(thinking)
+
+                    generated = data.get("response", "")
+                    if generated:
+                        response_parts.append(generated)
+
+                    if data.get("done"):
+                        done_reason = data.get("done_reason")
+                        break
+
+                if show_thinking and thinking_parts:
+                    print("\n", file=sys.stdout)
+                if done_reason == "length":
+                    print(
+                        "Warning: Ollama stopped because it hit --max-new-tokens; "
+                        "increase the value if output is still incomplete.",
+                        file=sys.stderr,
+                    )
+                return "".join(response_parts).strip()
+
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.URLError as exc:
         raise RuntimeError(
@@ -147,11 +195,20 @@ def generate_mnemonic(
     target_meaning=None,
     model_name=MODEL_NAME,
     ollama_url=DEFAULT_OLLAMA_URL,
-    max_new_tokens=100,
+    max_new_tokens=DEFAULT_MAX_NEW_TOKENS,
+    think=True,
+    show_thinking=True,
 ):
     """Generate a mnemonic for a given character using Ollama."""
     prompt = build_prompt(character, constituents, target_meaning)
-    return call_ollama(prompt, model_name, ollama_url, max_new_tokens)
+    return call_ollama(
+        prompt,
+        model_name,
+        ollama_url,
+        max_new_tokens,
+        think,
+        show_thinking,
+    )
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate a Chinese character mnemonic.")
@@ -175,8 +232,18 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max-new-tokens",
         type=int,
-        default=100,
+        default=DEFAULT_MAX_NEW_TOKENS,
         help="Maximum tokens to ask Ollama to generate.",
+    )
+    parser.add_argument(
+        "--hide-thinking",
+        action="store_true",
+        help="Request Ollama thinking but do not print it.",
+    )
+    parser.add_argument(
+        "--no-thinking",
+        action="store_true",
+        help="Do not request Ollama thinking.",
     )
     args = parser.parse_args()
 
@@ -198,5 +265,7 @@ if __name__ == "__main__":
         model_name=args.model,
         ollama_url=args.ollama_url,
         max_new_tokens=args.max_new_tokens,
+        think=not args.no_thinking,
+        show_thinking=not args.hide_thinking and not args.no_thinking,
     )
     print(f"Mnemonic for '{char}': {mnemonic}")
