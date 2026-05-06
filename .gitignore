@@ -4,3 +4,7 @@ dictionary/dict.sqlite3
 .venv/
 __pycache__/
 .DS_Store
+package-lock.json
+node_modules/
+dist/
+target/
