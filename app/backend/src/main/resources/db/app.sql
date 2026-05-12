@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email CITEXT UNIQUE,
     username CITEXT UNIQUE,
-    display_name TEXT,
+    display_name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active'
         CHECK (status IN ('active', 'disabled', 'deleted')),
@@ -36,6 +36,9 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_status
     ON users(status);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_display_name_unique
+    ON users(lower(display_name));
+
 CREATE TABLE IF NOT EXISTS user_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -44,8 +47,12 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     ip_address INET,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ NOT NULL,
+    absolute_expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '12 hours',
     revoked_at TIMESTAMPTZ
 );
+
+ALTER TABLE user_sessions
+    ADD COLUMN IF NOT EXISTS absolute_expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '12 hours';
 
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active
     ON user_sessions(user_id, expires_at)

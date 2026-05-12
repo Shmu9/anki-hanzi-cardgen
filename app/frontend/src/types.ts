@@ -97,6 +97,7 @@ export interface AuthSession {
     userId: string;
     createdAt: string;
     expiresAt: string;
+    absoluteExpiresAt?: string;
 }
 
 export interface AuthResponse {
