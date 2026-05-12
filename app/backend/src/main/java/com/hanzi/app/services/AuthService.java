@@ -16,11 +16,14 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.Base64;
+import java.util.Locale;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
+import java.util.Set;
 import java.util.UUID;
+import java.util.regex.Pattern;
 import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 
@@ -29,7 +32,12 @@ public final class AuthService {
     private static final int PBKDF2_KEY_BITS = 256;
     private static final int SALT_BYTES = 16;
     private static final int SESSION_TOKEN_BYTES = 32;
-    private static final Duration SESSION_TTL = Duration.ofMinutes(60);
+    private static final Duration SESSION_TTL = Duration.ofMinutes(20);
+    private static final Duration ABSOLUTE_SESSION_TTL = Duration.ofHours(12);
+    private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,63}$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern DISPLAY_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{3,20}$");
+    private static final Pattern PASSWORD_NUMBER_OR_SYMBOL = Pattern.compile("[^A-Za-z]");
+    private static final Set<String> RESERVED_DISPLAY_NAMES = Set.of("admin", "administrator", "support", "system", "root", "staff");
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final String dbUrl;
@@ -54,16 +62,17 @@ public final class AuthService {
         requireConfigured();
         String email = normalizeEmail(stringValue(request, "email"));
         String username = normalizeUsername(stringValue(request, "username"));
-        String displayName = blankToNull(stringValue(request, "displayName"));
+        String displayName = normalizeDisplayName(stringValue(request, "displayName"));
         String password = stringValue(request, "password");
 
-        if (email == null && username == null) {
-            throw new AuthException(400, "Email or username is required.");
+        if (email == null) {
+            throw new AuthException(400, "Email is required.");
         }
-        if (email != null && !email.contains("@")) {
+        if (!EMAIL_PATTERN.matcher(email).matches()) {
             throw new AuthException(400, "Enter a valid email address.");
         }
-        validatePassword(password);
+        validateDisplayName(displayName);
+        validatePassword(password, email, displayName);
 
         try (Connection conn = connect()) {
             conn.setAutoCommit(false);
@@ -75,7 +84,7 @@ public final class AuthService {
             } catch (SQLException ex) {
                 conn.rollback();
                 if ("23505".equals(ex.getSQLState())) {
-                    throw new AuthException(409, "An account with that email or username already exists.");
+                    throw new AuthException(409, "An account with that email or display name already exists.");
                 }
                 throw ex;
             }
@@ -96,7 +105,7 @@ public final class AuthService {
             try {
                 StoredUser stored = findUserForSignIn(conn, identifier);
                 if (stored == null || !verifyPassword(password, stored.passwordHash())) {
-                    throw new AuthException(401, "Invalid email, username, or password.");
+                    throw new AuthException(401, "Invalid email or password.");
                 }
                 if (!"active".equals(stored.user().get("status"))) {
                     throw new AuthException(403, "This account is not active.");
@@ -125,10 +134,11 @@ public final class AuthService {
                 return Map.of("authenticated", false);
             }
             touchUser(conn, sessionUser.userId());
+            Map<String, Object> session = refreshSession(conn, token, sessionUser.sessionId());
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("authenticated", true);
             payload.put("user", findUserById(conn, sessionUser.userId()));
-            payload.put("session", sessionUser.session());
+            payload.put("session", session);
             return payload;
         }
     }
@@ -165,6 +175,7 @@ public final class AuthService {
     }
 
     private Connection connect() throws SQLException {
+        loadPostgresDriver();
         if (dbUser == null) {
             return DriverManager.getConnection(dbUrl);
         }
@@ -174,6 +185,14 @@ public final class AuthService {
             props.setProperty("password", dbPassword);
         }
         return DriverManager.getConnection(dbUrl, props);
+    }
+
+    private static void loadPostgresDriver() throws SQLException {
+        try {
+            Class.forName("org.postgresql.Driver");
+        } catch (ClassNotFoundException ex) {
+            throw new SQLException("PostgreSQL JDBC driver is not available.", ex);
+        }
     }
 
     private Map<String, Object> insertUser(
@@ -200,10 +219,12 @@ public final class AuthService {
                 FROM users
                 WHERE lower(email) = lower(?)
                    OR lower(username) = lower(?)
+                   OR lower(display_name) = lower(?)
                 LIMIT 1
                 """)) {
             statement.setString(1, identifier);
             statement.setString(2, identifier);
+            statement.setString(3, identifier);
             try (ResultSet rows = statement.executeQuery()) {
                 if (!rows.next()) {
                     return null;
@@ -231,15 +252,23 @@ public final class AuthService {
             throws SQLException {
         String token = sessionToken();
         try (PreparedStatement statement = conn.prepareStatement("""
-                INSERT INTO user_sessions (user_id, token_hash, user_agent, ip_address, expires_at)
-                VALUES (?, ?, ?, NULLIF(?, '')::inet, now() + (? * interval '1 second'))
-                RETURNING id, user_id, created_at, expires_at
+                INSERT INTO user_sessions (user_id, token_hash, user_agent, ip_address, expires_at, absolute_expires_at)
+                VALUES (
+                    ?,
+                    ?,
+                    ?,
+                    NULLIF(?, '')::inet,
+                    now() + (? * interval '1 second'),
+                    now() + (? * interval '1 second')
+                )
+                RETURNING id, user_id, created_at, expires_at, absolute_expires_at
                 """)) {
             statement.setObject(1, userId);
             statement.setString(2, hashToken(token));
             statement.setString(3, truncate(userAgent, 512));
             statement.setString(4, blankToNull(ipAddress));
             statement.setLong(5, SESSION_TTL.toSeconds());
+            statement.setLong(6, ABSOLUTE_SESSION_TTL.toSeconds());
             try (ResultSet rows = statement.executeQuery()) {
                 rows.next();
                 Map<String, Object> session = sessionMap(rows);
@@ -251,12 +280,13 @@ public final class AuthService {
 
     private SessionUser findSession(Connection conn, String token) throws SQLException {
         try (PreparedStatement statement = conn.prepareStatement("""
-                SELECT sessions.id, sessions.user_id, sessions.created_at, sessions.expires_at
+                SELECT sessions.id, sessions.user_id, sessions.created_at, sessions.expires_at, sessions.absolute_expires_at
                 FROM user_sessions AS sessions
                 JOIN users ON users.id = sessions.user_id
                 WHERE sessions.token_hash = ?
                   AND sessions.revoked_at IS NULL
                   AND sessions.expires_at > now()
+                  AND sessions.absolute_expires_at > now()
                   AND users.status = 'active'
                 LIMIT 1
                 """)) {
@@ -266,7 +296,28 @@ public final class AuthService {
                     return null;
                 }
                 UUID userId = (UUID) rows.getObject("user_id");
-                return new SessionUser(userId, sessionMap(rows));
+                return new SessionUser((UUID) rows.getObject("id"), userId, sessionMap(rows));
+            }
+        }
+    }
+
+    private Map<String, Object> refreshSession(Connection conn, String token, UUID sessionId) throws SQLException {
+        try (PreparedStatement statement = conn.prepareStatement("""
+                UPDATE user_sessions
+                SET expires_at = LEAST(now() + (? * interval '1 second'), absolute_expires_at)
+                WHERE id = ?
+                  AND token_hash = ?
+                  AND revoked_at IS NULL
+                  AND expires_at > now()
+                  AND absolute_expires_at > now()
+                RETURNING id, user_id, created_at, expires_at, absolute_expires_at
+                """)) {
+            statement.setLong(1, SESSION_TTL.toSeconds());
+            statement.setObject(2, sessionId);
+            statement.setString(3, hashToken(token));
+            try (ResultSet rows = statement.executeQuery()) {
+                rows.next();
+                return sessionMap(rows);
             }
         }
     }
@@ -316,6 +367,7 @@ public final class AuthService {
         session.put("userId", rows.getString("user_id"));
         session.put("createdAt", objectString(rows, "created_at"));
         session.put("expiresAt", objectString(rows, "expires_at"));
+        session.put("absoluteExpiresAt", objectString(rows, "absolute_expires_at"));
         return session;
     }
 
@@ -324,10 +376,54 @@ public final class AuthService {
         return value == null ? null : value.toString();
     }
 
-    private static void validatePassword(String password) throws AuthException {
+    private static void validateDisplayName(String displayName) throws AuthException {
+        if (displayName == null) {
+            throw new AuthException(400, "Display name is required.");
+        }
+        if (!isValidDisplayName(displayName)) {
+            throw new AuthException(400, "Display name must be 3 to 20 characters and use only letters, numbers, underscores, or hyphens.");
+        }
+    }
+
+    private static boolean isValidDisplayName(String displayName) {
+        if (displayName == null || !DISPLAY_NAME_PATTERN.matcher(displayName).matches()) {
+            return false;
+        }
+        if (RESERVED_DISPLAY_NAMES.contains(displayName.toLowerCase(Locale.ROOT))) {
+            return false;
+        }
+        return true;
+    }
+
+    private static void validatePassword(String password, String email, String displayName) throws AuthException {
         if (password == null || password.length() < 8) {
             throw new AuthException(400, "Password must be at least 8 characters.");
         }
+        if (!PASSWORD_NUMBER_OR_SYMBOL.matcher(password).find()) {
+            throw new AuthException(400, "Password must include at least one number or symbol.");
+        }
+        String passwordLower = password.toLowerCase(Locale.ROOT);
+        if (displayName != null && passwordLower.contains(displayName.toLowerCase(Locale.ROOT))) {
+            throw new AuthException(400, "Password must not include your display name.");
+        }
+        if (containsEmailSubstring(passwordLower, email)) {
+            throw new AuthException(400, "Password must not include long pieces of your email address.");
+        }
+    }
+
+    private static boolean containsEmailSubstring(String passwordLower, String email) {
+        if (email == null) {
+            return false;
+        }
+        String normalizedEmail = email.toLowerCase(Locale.ROOT);
+        for (int start = 0; start <= normalizedEmail.length() - 5; start++) {
+            for (int end = start + 5; end <= normalizedEmail.length(); end++) {
+                if (passwordLower.contains(normalizedEmail.substring(start, end))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static String hashPassword(String password) throws AuthException {
@@ -406,6 +502,10 @@ public final class AuthService {
         return normalized == null ? null : normalized.toLowerCase();
     }
 
+    private static String normalizeDisplayName(String value) {
+        return blankToNull(value);
+    }
+
     private static String blankToNull(String value) {
         return value == null || value.isBlank() ? null : value.trim();
     }
@@ -431,7 +531,7 @@ public final class AuthService {
 
     private record StoredUser(UUID id, String passwordHash, Map<String, Object> user) {}
 
-    private record SessionUser(UUID userId, Map<String, Object> session) {}
+    private record SessionUser(UUID sessionId, UUID userId, Map<String, Object> session) {}
 
     public static final class AuthException extends Exception {
         private final int status;
