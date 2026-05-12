@@ -13,6 +13,24 @@ state, such as accounts, sessions, and component meanings, lives in PostgreSQL.
 
 ## Development
 
+For quick local testing, use the dev launcher:
+
+```bash
+app/scripts/dev.sh
+```
+
+It starts PostgreSQL if needed, creates the `hanzi_cardgen` app database if it
+does not exist, builds and starts the backend, and starts the Vite frontend.
+The app will be available at `http://127.0.0.1:5173`.
+
+Useful overrides:
+
+```bash
+APP_DB_NAME=hanzi_cardgen_test BACKEND_PORT=9876 FRONTEND_PORT=5174 app/scripts/dev.sh
+```
+
+If PostgreSQL is installed somewhere non-standard, set `POSTGRES_DATA_DIR`.
+
 ### App Database
 
 Authentication and per-user preferences require a PostgreSQL database. The
@@ -58,9 +76,20 @@ Supported environment variables:
 Without an app database URL, dictionary lookup still works, but auth endpoints
 return an authentication database configuration error.
 
+#### Reseting the Database
+```bash
+dropdb -h 127.0.0.1 -p 5432 hanzi_cardgen
+createdb -h 127.0.0.1 -p 5432 hanzi_cardgen
+```
+
 ### Backend
 
 Run the backend:
+
+Optionally, clean old jars from target
+```bash
+mvn clean package
+```
 
 ```bash
 cd app/backend
