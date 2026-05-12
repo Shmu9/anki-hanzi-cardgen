@@ -20,14 +20,14 @@ public final class StaticFileHandler {
             target = staticDir.resolve("index.html").normalize();
         }
         if (!target.startsWith(staticDir) || !Files.exists(target)) {
-            HttpSupport.sendJson(exchange, 404, Map.of("error", "Frontend build not found"));
+            HttpHelper.sendJson(exchange, 404, Map.of("error", "Frontend build not found"));
             return;
         }
 
         byte[] body = Files.readAllBytes(target);
-        HttpSupport.addCorsHeaders(exchange);
+        HttpHelper.addCorsHeaders(exchange);
         exchange.getResponseHeaders().set("Content-Type", contentType(target));
-        exchange.sendResponseHeaders(200, body.length);
+        HttpHelper.sendResponseHeaders(exchange, 200, body.length);
         try (OutputStream output = exchange.getResponseBody()) {
             output.write(body);
         }

@@ -12,16 +12,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
-public final class HttpSupport {
+public final class HttpHelper {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private HttpSupport() {}
+    private HttpHelper() {}
 
     public static void sendJson(HttpExchange exchange, int status, Object payload) throws IOException {
         byte[] body = MAPPER.writeValueAsBytes(payload);
         addCorsHeaders(exchange);
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=utf-8");
-        exchange.sendResponseHeaders(status, body.length);
+        sendResponseHeaders(exchange, status, body.length);
         try (OutputStream output = exchange.getResponseBody()) {
             output.write(body);
         }
@@ -29,7 +29,12 @@ public final class HttpSupport {
 
     public static void sendNoContent(HttpExchange exchange) throws IOException {
         addCorsHeaders(exchange);
-        exchange.sendResponseHeaders(204, -1);
+        sendResponseHeaders(exchange, 204, -1);
+    }
+
+    public static void sendResponseHeaders(HttpExchange exchange, int status, long responseLength) throws IOException {
+        System.out.printf("%s %s -> %d%n", exchange.getRequestMethod(), exchange.getRequestURI(), status);
+        exchange.sendResponseHeaders(status, responseLength);
     }
 
     public static Map<String, Object> readJsonObject(HttpExchange exchange) throws IOException {
