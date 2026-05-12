@@ -1,18 +1,23 @@
 import type { AuthResponse, EntryResponse, MetadataResponse, SearchFilters, SearchResponse } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
+const API_ROOT = API_BASE.replace(/\/+$/, "");
+
+function apiUrl(path: string) {
+    return `${API_ROOT}${path}`;
+}
 
 async function getJson<T>(path: string): Promise<T> {
-    const response = await fetch(`${API_BASE}${path}`);
+    const response = await fetch(apiUrl(path));
     const payload = await response.json();
     if (!response.ok) {
-        throw new Error(payload.error ?? "Request failed");
+        throw new Error(errorMessage(payload));
     }
     return payload as T;
 }
 
 async function sendJson<T>(path: string, body: unknown, token?: string): Promise<T> {
-    const response = await fetch(`${API_BASE}${path}`, {
+    const response = await fetch(apiUrl(path), {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
@@ -22,20 +27,27 @@ async function sendJson<T>(path: string, body: unknown, token?: string): Promise
     });
     const payload = await response.json();
     if (!response.ok) {
-        throw new Error(payload.error ?? "Request failed");
+        throw new Error(errorMessage(payload));
     }
     return payload as T;
 }
 
 async function getJsonWithAuth<T>(path: string, token?: string): Promise<T> {
-    const response = await fetch(`${API_BASE}${path}`, {
+    const response = await fetch(apiUrl(path), {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     const payload = await response.json();
     if (!response.ok) {
-        throw new Error(payload.error ?? "Request failed");
+        throw new Error(errorMessage(payload));
     }
     return payload as T;
+}
+
+function errorMessage(payload: { error?: string; method?: string; path?: string }) {
+    if (payload.error === "Method not allowed" && payload.method && payload.path) {
+        return `${payload.error}: ${payload.method} ${payload.path}`;
+    }
+    return payload.error ?? "Request failed";
 }
 
 export function getMetadata(): Promise<MetadataResponse> {
