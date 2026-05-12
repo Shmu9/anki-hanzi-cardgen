@@ -191,7 +191,8 @@ h3 {
 }
 
 .primary-button,
-.secondary-button {
+.secondary-button,
+.text-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -210,6 +211,11 @@ h3 {
 .secondary-button {
   border: 1px solid var(--line);
   background: var(--panel);
+  color: var(--teal);
+}
+
+.text-button {
+  background: transparent;
   color: var(--teal);
 }
 
@@ -233,7 +239,8 @@ h3 {
   gap: 6px;
 }
 
-.field span {
+.field span,
+.field-label {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
@@ -256,6 +263,35 @@ h3 {
   min-height: 112px;
   resize: vertical;
   line-height: 1.45;
+}
+
+.password-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+}
+
+.password-field input {
+  border-radius: 8px 0 0 8px;
+}
+
+.password-toggle {
+  min-width: 68px;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
+  background: var(--panel);
+  color: var(--teal);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.password-toggle:hover,
+.password-toggle:focus-visible {
+  background: #e5f3f4;
 }
 
 .search-field input {
@@ -869,21 +905,100 @@ h3 {
 }
 
 .auth-status,
-.auth-message {
+.auth-message,
+.auth-form-message {
   margin-top: 18px;
 }
 
-.auth-status {
+.auth-status,
+.account-summary {
   display: grid;
   gap: 8px;
   max-width: 360px;
 }
 
 .auth-status span,
-.auth-message {
+.account-summary span,
+.auth-message,
+.muted-copy {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.45;
+}
+
+.auth-form-message {
+  padding: 10px 12px;
+  border: 1px solid #e1b7af;
+  border-radius: 8px;
+  background: #fff1ee;
+  color: var(--red);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.password-rules {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.password-rules li {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.password-rules span {
+  display: inline-grid;
+  place-items: center;
+  min-height: 24px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.password-rules .satisfied {
+  color: var(--green);
+}
+
+.password-rules .satisfied span {
+  border-color: #b6d4c7;
+  background: #e6f0ec;
+  color: var(--green);
+}
+
+.session-warning {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: min(480px, calc(100% - 44px));
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.session-warning div {
+  display: grid;
+  gap: 4px;
+}
+
+.session-warning span {
+  color: var(--muted);
+  font-size: 14px;
 }
 
 button:disabled {
@@ -934,6 +1049,14 @@ button:disabled {
 
   .inline-lookup {
     grid-template-columns: 1fr auto auto;
+  }
+
+  .session-warning {
+    left: 14px;
+    right: 14px;
+    bottom: 14px;
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

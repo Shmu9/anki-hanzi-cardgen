@@ -1,13 +1,17 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { getEntry, getMetadata, searchGlyphs } from "./api";
-import { AuthPage } from "./pages/AuthPage";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getEntry, getMetadata, getSession, registerAccount, searchGlyphs, signIn, signOut } from "./api";
 import { CharacterDetailPage } from "./pages/CharacterDetailPage";
 import { CreatePage } from "./pages/CreatePage";
 import { ExplorePage } from "./pages/ExplorePage";
 import { HomePage } from "./pages/HomePage";
 import { PreferencesPage } from "./pages/PreferencesPage";
-import { navItems, type Page, type RouteState } from "./routes";
-import type { EntryResponse, GlyphRow, MetadataResponse, SearchFilters } from "./types";
+import { RegisterPage } from "./pages/RegisterPage";
+import { SignInPage } from "./pages/SignInPage";
+import { navItems, pages, type Page, type RouteState } from "./routes";
+import type { AuthResponse, AuthSession, AuthUser, EntryResponse, GlyphRow, MetadataResponse, SearchFilters } from "./types";
+
+const SESSION_TOKEN_KEY = "hanzi.sessionToken";
+const SESSION_WARNING_MS = 2 * 60 * 1000;
 
 const initialFilters: SearchFilters = {
     q: "",
@@ -27,6 +31,13 @@ export default function App() {
     const [rawVisible, setRawVisible] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [searching, setSearching] = useState(false);
+    const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+    const [authSession, setAuthSession] = useState<AuthSession | null>(null);
+    const [authToken, setAuthToken] = useState(() => localStorage.getItem(SESSION_TOKEN_KEY) ?? "");
+    const [authMessage, setAuthMessage] = useState("");
+    const [authBusy, setAuthBusy] = useState(false);
+    const [sessionWarningVisible, setSessionWarningVisible] = useState(false);
+    const refreshingSessionRef = useRef(false);
 
     useEffect(() => {
         const syncFromHash = () => {
@@ -46,6 +57,112 @@ export default function App() {
             .then(setMetadata)
             .catch((err: Error) => setError(err.message));
     }, []);
+
+    const clearAuth = useCallback((message = "") => {
+        localStorage.removeItem(SESSION_TOKEN_KEY);
+        setAuthToken("");
+        setAuthUser(null);
+        setAuthSession(null);
+        setSessionWarningVisible(false);
+        setAuthMessage(message);
+    }, []);
+
+    const applyAuthResponse = useCallback((response: AuthResponse, fallbackToken?: string) => {
+        if (response.authenticated && response.user && response.session) {
+            const nextToken = response.token ?? fallbackToken ?? "";
+            if (nextToken) {
+                localStorage.setItem(SESSION_TOKEN_KEY, nextToken);
+                setAuthToken(nextToken);
+            }
+            setAuthUser(response.user);
+            setAuthSession(response.session);
+            setSessionWarningVisible(false);
+            return true;
+        }
+        return false;
+    }, []);
+
+    const refreshSession = useCallback(
+        async (options: { showErrors?: boolean } = {}) => {
+            if (!authToken || refreshingSessionRef.current) {
+                return;
+            }
+            refreshingSessionRef.current = true;
+            try {
+                const response = await getSession(authToken);
+                if (!applyAuthResponse(response, authToken)) {
+                    clearAuth("Session expired. Sign in again to continue.");
+                }
+            } catch (err) {
+                if (options.showErrors) {
+                    setAuthMessage(err instanceof Error ? err.message : "Could not refresh the session.");
+                }
+            } finally {
+                refreshingSessionRef.current = false;
+            }
+        },
+        [applyAuthResponse, authToken, clearAuth],
+    );
+
+    useEffect(() => {
+        if (!authToken) {
+            setAuthUser(null);
+            setAuthSession(null);
+            return;
+        }
+        let isCurrent = true;
+        getSession(authToken)
+            .then((response) => {
+                if (!isCurrent) {
+                    return;
+                }
+                if (applyAuthResponse(response, authToken)) {
+                    setAuthMessage("");
+                } else {
+                    clearAuth();
+                }
+            })
+            .catch((err: Error) => {
+                if (isCurrent) {
+                    setAuthMessage(err.message);
+                }
+            });
+        return () => {
+            isCurrent = false;
+        };
+    }, [applyAuthResponse, authToken, clearAuth]);
+
+    useEffect(() => {
+        if (!authToken || !authUser) {
+            return;
+        }
+        const actionEvents = ["click", "keydown", "change", "submit"];
+        const onAction = () => {
+            refreshSession();
+        };
+        actionEvents.forEach((eventName) => window.addEventListener(eventName, onAction, true));
+        return () => {
+            actionEvents.forEach((eventName) => window.removeEventListener(eventName, onAction, true));
+        };
+    }, [authToken, authUser, refreshSession]);
+
+    useEffect(() => {
+        if (!authSession?.expiresAt) {
+            return;
+        }
+        const expiresAtMs = Date.parse(authSession.expiresAt);
+        if (!Number.isFinite(expiresAtMs)) {
+            return;
+        }
+        const warningDelay = Math.max(0, expiresAtMs - Date.now() - SESSION_WARNING_MS);
+        const expiryDelay = Math.max(0, expiresAtMs - Date.now());
+        const warningTimer = window.setTimeout(() => setSessionWarningVisible(true), warningDelay);
+        const expiryTimer = window.setTimeout(() => clearAuth("Session expired. Sign in again to continue."), expiryDelay);
+        return () => {
+            window.clearTimeout(warningTimer);
+            window.clearTimeout(expiryTimer);
+        };
+    }, [authSession, clearAuth]);
 
     const setRoute = useCallback((next: RouteState) => {
         const targetHash = formatHashRoute(next);
@@ -140,6 +257,71 @@ export default function App() {
         }
     };
 
+    const submitSignIn = useCallback(
+        async (input: { identifier: string; password: string }) => {
+            setAuthBusy(true);
+            setAuthMessage("");
+            try {
+                const response = await signIn(input);
+                if (applyAuthResponse(response)) {
+                    setAuthMessage("Signed in.");
+                    setRoute({ page: "preferences" });
+                    return true;
+                }
+                return false;
+            } catch (err) {
+                setAuthMessage(err instanceof Error ? err.message : "Authentication failed.");
+                return false;
+            } finally {
+                setAuthBusy(false);
+            }
+        },
+        [applyAuthResponse, setRoute],
+    );
+
+    const submitRegister = useCallback(
+        async (input: { displayName: string; email: string; password: string }) => {
+            setAuthBusy(true);
+            setAuthMessage("");
+            try {
+                const response = await registerAccount(input);
+                if (applyAuthResponse(response)) {
+                    setAuthMessage("Account created.");
+                    setRoute({ page: "preferences" });
+                    return true;
+                }
+                return false;
+            } catch (err) {
+                setAuthMessage(err instanceof Error ? err.message : "Registration failed.");
+                return false;
+            } finally {
+                setAuthBusy(false);
+            }
+        },
+        [applyAuthResponse, setRoute],
+    );
+
+    const submitSignOut = useCallback(async () => {
+        setAuthBusy(true);
+        try {
+            await signOut(authToken);
+        } finally {
+            setAuthBusy(false);
+            clearAuth("Signed out.");
+            setRoute({ page: "auth" });
+        }
+    }, [authToken, clearAuth, setRoute]);
+
+    const dynamicNavItems = useMemo(
+        () => [
+            ...navItems,
+            authUser
+                ? { page: "preferences" as const, label: authUser.displayName ? `Profile: ${authUser.displayName}` : "Profile" }
+                : { page: "auth" as const, label: "Sign in" },
+        ],
+        [authUser],
+    );
+
     return (
         <div className="site-shell">
             <header className="top-bar">
@@ -151,7 +333,7 @@ export default function App() {
                     </span>
                 </button>
                 <nav className="top-nav" aria-label="Primary navigation">
-                    {navItems.map((item) => (
+                    {dynamicNavItems.map((item) => (
                         <button
                             className={route.page === item.page ? "active" : ""}
                             key={item.page}
@@ -208,9 +390,41 @@ export default function App() {
 
             {route.page === "create" ? <CreatePage selectedGlyph={route.glyph ?? selectedGlyph ?? ""} onOpenExplorer={() => setRoute({ page: "explore" })} /> : null}
 
-            {route.page === "preferences" ? <PreferencesPage /> : null}
+            {route.page === "preferences" ? (
+                <PreferencesPage user={authUser} isBusy={authBusy} message={authMessage} onSignOut={submitSignOut} onSignIn={() => setRoute({ page: "auth" })} />
+            ) : null}
 
-            {route.page === "auth" ? <AuthPage /> : null}
+            {route.page === "auth" ? (
+                <SignInPage
+                    user={authUser}
+                    message={authMessage}
+                    isBusy={authBusy}
+                    onNavigateToRegister={() => setRoute({ page: "register" })}
+                    onSignIn={submitSignIn}
+                />
+            ) : null}
+
+            {route.page === "register" ? (
+                <RegisterPage
+                    user={authUser}
+                    message={authMessage}
+                    isBusy={authBusy}
+                    onNavigateToSignIn={() => setRoute({ page: "auth" })}
+                    onRegister={submitRegister}
+                />
+            ) : null}
+
+            {sessionWarningVisible && authUser ? (
+                <div className="session-warning" role="alert">
+                    <div>
+                        <strong>Your session is about to expire.</strong>
+                        <span>Stay signed in to keep working.</span>
+                    </div>
+                    <button className="primary-button" disabled={authBusy} type="button" onClick={() => refreshSession({ showErrors: true })}>
+                        Stay signed in
+                    </button>
+                </div>
+            ) : null}
         </div>
     );
 }
@@ -229,5 +443,5 @@ function formatHashRoute(route: RouteState): string {
 }
 
 function isPage(value: string): value is Page {
-    return navItems.some((item) => item.page === value);
+    return pages.includes(value as Page);
 }

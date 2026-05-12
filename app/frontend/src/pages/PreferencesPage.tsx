@@ -1,4 +1,14 @@
-export function PreferencesPage() {
+import type { AuthUser } from "../types";
+
+interface PreferencesPageProps {
+    user: AuthUser | null;
+    isBusy: boolean;
+    message: string;
+    onSignOut: () => void;
+    onSignIn: () => void;
+}
+
+export function PreferencesPage({ user, isBusy, message, onSignOut, onSignIn }: PreferencesPageProps) {
     return (
         <main className="page-content">
             <section className="page-hero compact-hero">
@@ -10,6 +20,32 @@ export function PreferencesPage() {
             </section>
 
             <section className="settings-grid">
+                <div className="panel form-panel">
+                    <div className="section-heading">
+                        <h2>Profile</h2>
+                        <span>{user ? "Signed in" : "Signed out"}</span>
+                    </div>
+                    {user ? (
+                        <>
+                            <div className="account-summary">
+                                <strong>{user.displayName || user.email || user.username}</strong>
+                                <span>{user.email || user.username}</span>
+                            </div>
+                            <button className="secondary-button" disabled={isBusy} type="button" onClick={onSignOut}>
+                                Sign out
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            <p className="muted-copy">Sign in to save mnemonic profiles and component meanings to your account.</p>
+                            <button className="primary-button" type="button" onClick={onSignIn}>
+                                Sign in
+                            </button>
+                        </>
+                    )}
+                    {message ? <p className="auth-message">{message}</p> : null}
+                </div>
+
                 <form className="panel form-panel">
                     <div className="section-heading">
                         <h2>Mnemonic profile</h2>
