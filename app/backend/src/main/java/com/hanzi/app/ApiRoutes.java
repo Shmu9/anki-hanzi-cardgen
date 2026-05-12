@@ -1,11 +1,14 @@
 package com.hanzi.app;
 
 import com.sun.net.httpserver.HttpExchange;
+import com.hanzi.app.services.AnkiSyncService;
 import com.hanzi.app.services.AuthService;
 import com.hanzi.app.services.AuthService.AuthException;
 import com.hanzi.app.services.DictionaryService;
+import com.hanzi.app.services.FlashcardService;
+import com.hanzi.app.services.MnemonicService;
 import com.hanzi.app.services.PreferenceService;
-import com.hanzi.app.utils.HttpSupport;
+import com.hanzi.app.utils.HttpHelper;
 import java.io.IOException;
 import java.sql.SQLException;
 import java.util.LinkedHashMap;
@@ -13,14 +16,23 @@ import java.util.Map;
 
 final class ApiRoutes {
     private final DictionaryService dictionary;
+    private final FlashcardService flashcards;
+    private final MnemonicService mnemonics;
+    private final AnkiSyncService ankiSync;
     private final PreferenceService preferences;
     private final AuthService auth;
 
     ApiRoutes(
             DictionaryService dictionary,
+            FlashcardService flashcards,
+            MnemonicService mnemonics,
+            AnkiSyncService ankiSync,
             PreferenceService preferences,
             AuthService auth) {
         this.dictionary = dictionary;
+        this.flashcards = flashcards;
+        this.mnemonics = mnemonics;
+        this.ankiSync = ankiSync;
         this.preferences = preferences;
         this.auth = auth;
     }
@@ -29,23 +41,23 @@ final class ApiRoutes {
             throws IOException, SQLException {
         String method = exchange.getRequestMethod();
         if ("OPTIONS".equals(method)) {
-            HttpSupport.sendNoContent(exchange);
+            HttpHelper.sendNoContent(exchange);
             return;
         }
 
         if (isGet(method, path, "/api/health")) {
-            HttpSupport.sendJson(exchange, 200, healthPayload());
+            HttpHelper.sendJson(exchange, 200, healthPayload());
             return;
         }
 
         if (isGet(method, path, "/api/metadata") || isGet(method, path, "/api/explore/metadata")) {
-            HttpSupport.sendJson(exchange, 200, dictionary.metadata());
+            HttpHelper.sendJson(exchange, 200, dictionary.metadata());
             return;
         }
 
         if (isGet(method, path, "/api/search") || isGet(method, path, "/api/explore/search")) {
-            int limit = HttpSupport.clamp(HttpSupport.parseInt(params.getOrDefault("limit", "40"), 40), 1, 120);
-            HttpSupport.sendJson(exchange, 200, Map.of("results", dictionary.search(
+            int limit = HttpHelper.clamp(HttpHelper.parseInt(params.getOrDefault("limit", "40"), 40), 1, 120);
+            HttpHelper.sendJson(exchange, 200, Map.of("results", dictionary.search(
                     params.getOrDefault("q", ""),
                     params.get("hsk"),
                     params.get("stroke_min"),
@@ -55,12 +67,12 @@ final class ApiRoutes {
         }
 
         if ("GET".equals(method) && path.startsWith("/api/glyph/")) {
-            sendCharacterDetail(exchange, HttpSupport.decodePath(rawPath.substring("/api/glyph/".length())));
+            sendCharacterDetail(exchange, HttpHelper.decodePath(rawPath.substring("/api/glyph/".length())));
             return;
         }
 
         if ("GET".equals(method) && path.startsWith("/api/characters/")) {
-            sendCharacterDetail(exchange, HttpSupport.decodePath(rawPath.substring("/api/characters/".length())));
+            sendCharacterDetail(exchange, HttpHelper.decodePath(rawPath.substring("/api/characters/".length())));
             return;
         }
 
@@ -89,53 +101,53 @@ final class ApiRoutes {
             return;
         }
 
-        HttpSupport.sendJson(exchange, 404, Map.of("error", "Unknown API route"));
+        HttpHelper.sendJson(exchange, 404, Map.of("error", "Unknown API route"));
     }
 
     private void sendCharacterDetail(HttpExchange exchange, String key) throws IOException, SQLException {
         Map<String, Object> entry = dictionary.characterDetail(key);
         if (entry == null) {
-            HttpSupport.sendJson(exchange, 404, Map.of("error", "Glyph not found"));
+            HttpHelper.sendJson(exchange, 404, Map.of("error", "Glyph not found"));
             return;
         }
-        HttpSupport.sendJson(exchange, 200, entry);
+        HttpHelper.sendJson(exchange, 200, entry);
     }
 
     private void sendStub(HttpExchange exchange, Map<String, Object> payload) throws IOException {
-        HttpSupport.sendJson(exchange, 501, payload);
+        HttpHelper.sendJson(exchange, 501, payload);
     }
 
     private void handleAuth(HttpExchange exchange, String method, String path) throws IOException, SQLException {
         try {
             if ("POST".equals(method) && "/api/auth/register".equals(path)) {
-                HttpSupport.sendJson(exchange, 201, auth.register(
-                        HttpSupport.readJsonObject(exchange),
-                        HttpSupport.userAgent(exchange),
-                        HttpSupport.clientIp(exchange)));
+                HttpHelper.sendJson(exchange, 201, auth.register(
+                        HttpHelper.readJsonObject(exchange),
+                        HttpHelper.userAgent(exchange),
+                        HttpHelper.clientIp(exchange)));
                 return;
             }
 
             if ("POST".equals(method) && "/api/auth/sign-in".equals(path)) {
-                HttpSupport.sendJson(exchange, 200, auth.signIn(
-                        HttpSupport.readJsonObject(exchange),
-                        HttpSupport.userAgent(exchange),
-                        HttpSupport.clientIp(exchange)));
+                HttpHelper.sendJson(exchange, 200, auth.signIn(
+                        HttpHelper.readJsonObject(exchange),
+                        HttpHelper.userAgent(exchange),
+                        HttpHelper.clientIp(exchange)));
                 return;
             }
 
             if ("POST".equals(method) && "/api/auth/sign-out".equals(path)) {
-                HttpSupport.sendJson(exchange, 200, auth.signOut(HttpSupport.bearerToken(exchange)));
+                HttpHelper.sendJson(exchange, 200, auth.signOut(HttpHelper.bearerToken(exchange)));
                 return;
             }
 
             if ("GET".equals(method) && "/api/auth/session".equals(path)) {
-                HttpSupport.sendJson(exchange, 200, auth.session(HttpSupport.bearerToken(exchange)));
+                HttpHelper.sendJson(exchange, 200, auth.session(HttpHelper.bearerToken(exchange)));
                 return;
             }
 
-            HttpSupport.sendJson(exchange, 404, Map.of("error", "Unknown auth route"));
+            HttpHelper.sendJson(exchange, 404, Map.of("error", "Unknown auth route"));
         } catch (AuthException ex) {
-            HttpSupport.sendJson(exchange, ex.status(), Map.of("error", ex.getMessage()));
+            HttpHelper.sendJson(exchange, ex.status(), Map.of("error", ex.getMessage()));
         }
     }
 

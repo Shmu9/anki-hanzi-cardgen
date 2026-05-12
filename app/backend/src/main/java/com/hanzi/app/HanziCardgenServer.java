@@ -8,7 +8,7 @@ import com.hanzi.app.services.DictionaryService;
 import com.hanzi.app.services.FlashcardService;
 import com.hanzi.app.services.MnemonicService;
 import com.hanzi.app.services.PreferenceService;
-import com.hanzi.app.utils.HttpSupport;
+import com.hanzi.app.utils.HttpHelper;
 import com.hanzi.app.utils.StaticFileHandler;
 import java.io.IOException;
 import java.net.BindException;
@@ -69,22 +69,30 @@ public final class HanziCardgenServer {
     private void handle(HttpExchange exchange) throws IOException {
         try {
             String rawPath = exchange.getRequestURI().getRawPath();
-            String path = HttpSupport.decodePath(rawPath);
+            String path = normalizePath(HttpHelper.decodePath(rawPath));
+            String routeRawPath = normalizePath(rawPath);
             if (path.startsWith("/api/")) {
-                apiRoutes.handle(exchange, path, rawPath, HttpSupport.queryParams(exchange.getRequestURI()));
+                apiRoutes.handle(exchange, path, routeRawPath, HttpHelper.queryParams(exchange.getRequestURI()));
             } else if ("GET".equals(exchange.getRequestMethod()) || "HEAD".equals(exchange.getRequestMethod())) {
                 staticFiles.handle(exchange, path);
             } else if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                HttpSupport.sendNoContent(exchange);
+                HttpHelper.sendNoContent(exchange);
             } else {
-                HttpSupport.sendJson(exchange, 405, Map.of("error", "Method not allowed"));
+                HttpHelper.sendJson(exchange, 405, Map.of(
+                        "error", "Method not allowed",
+                        "method", exchange.getRequestMethod(),
+                        "path", path));
             }
         } catch (Exception ex) {
             ex.printStackTrace();
             String message = ex.getMessage() == null ? ex.getClass().getSimpleName() : ex.getMessage();
-            HttpSupport.sendJson(exchange, 500, Map.of("error", message));
+            HttpHelper.sendJson(exchange, 500, Map.of("error", message));
         } finally {
             exchange.close();
         }
+    }
+
+    private static String normalizePath(String path) {
+        return path == null ? "/" : path.replaceAll("/{2,}", "/");
     }
 }
