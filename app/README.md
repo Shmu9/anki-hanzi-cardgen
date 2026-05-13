@@ -84,6 +84,13 @@ createdb -h 127.0.0.1 -p 5432 hanzi_cardgen
 
 ### Backend
 
+The backend targets Java 25. Make sure Maven is also using JDK 25:
+
+```bash
+java -version
+mvn -version
+```
+
 Run the backend:
 
 Optionally, clean old jars from target

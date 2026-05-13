@@ -51,6 +51,21 @@ require_command() {
   fi
 }
 
+configure_java() {
+  if [[ -n "${JAVA_HOME:-}" ]]; then
+    return
+  fi
+
+  if [[ -x /usr/libexec/java_home ]]; then
+    local java_home
+    if java_home="$(/usr/libexec/java_home -v 25 2>/dev/null)"; then
+      export JAVA_HOME="$java_home"
+      export PATH="$JAVA_HOME/bin:$PATH"
+      log "using Java 25 at $JAVA_HOME"
+    fi
+  fi
+}
+
 postgres_data_dir() {
   if [[ -n "${POSTGRES_DATA_DIR:-}" && -d "$POSTGRES_DATA_DIR" ]]; then
     printf '%s\n' "$POSTGRES_DATA_DIR"
@@ -123,6 +138,7 @@ ensure_database() {
 }
 
 build_backend() {
+  configure_java
   require_command mvn
   log "building backend"
   (cd "$BACKEND_DIR" && mvn -q -DskipTests package)
@@ -137,6 +153,7 @@ ensure_frontend_deps() {
 }
 
 start_backend() {
+  configure_java
   require_command java
   export HANZI_APP_DB_URL="${HANZI_APP_DB_URL:-jdbc:postgresql://$POSTGRES_HOST:$POSTGRES_PORT/$APP_DB_NAME}"
   export HANZI_APP_DB_USER="${HANZI_APP_DB_USER:-${PGUSER:-$USER}}"
