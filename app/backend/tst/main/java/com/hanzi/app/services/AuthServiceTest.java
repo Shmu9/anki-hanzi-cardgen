@@ -1,18 +1,20 @@
 package com.hanzi.app.services;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.fail;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import com.hanzi.app.services.AuthService.AuthException;
+import com.hanzi.app.services.AuthService.AuthSettings;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.time.Duration;
 import java.util.Map;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 public class AuthServiceTest {
     @Test
@@ -116,6 +118,21 @@ public class AuthServiceTest {
         assertEquals("abcde", invokeString("truncate", "abcdefghi", 5));
     }
 
+    @Test
+    public void testSettingsCanShortenButNotLengthenSessionLifetimes() {
+        AuthService service = new AuthService(
+                "   ",
+                null,
+                null,
+                new AuthSettings(Duration.ofSeconds(2), Duration.ofSeconds(4)));
+
+        assertFalse(service.isConfigured());
+        assertIllegalArgument("Session TTL must not exceed 20 minutes.",
+                () -> new AuthService("   ", null, null, new AuthSettings(Duration.ofMinutes(21), Duration.ofHours(1))));
+        assertIllegalArgument("Absolute session TTL must not exceed 12 hours.",
+                () -> new AuthService("   ", null, null, new AuthSettings(Duration.ofMinutes(20), Duration.ofHours(13))));
+    }
+
     private static void assertAuthException(int expectedStatus, String expectedMessage, ThrowingRunnable action) {
         try {
             action.run();
@@ -125,6 +142,17 @@ public class AuthServiceTest {
             assertEquals(expectedMessage, exception.getMessage());
         } catch (Exception exception) {
             fail("Expected AuthException but got " + exception.getClass().getName());
+        }
+    }
+
+    private static void assertIllegalArgument(String expectedMessage, ThrowingRunnable action) {
+        try {
+            action.run();
+            fail("Expected IllegalArgumentException");
+        } catch (IllegalArgumentException exception) {
+            assertEquals(expectedMessage, exception.getMessage());
+        } catch (Exception exception) {
+            fail("Expected IllegalArgumentException but got " + exception.getClass().getName());
         }
     }
 
