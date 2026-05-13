@@ -14,7 +14,7 @@ import java.sql.SQLException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-final class ApiRoutes {
+public final class ApiRoutes {
     private final DictionaryService dictionary;
     private final FlashcardService flashcards;
     private final MnemonicService mnemonics;
@@ -22,7 +22,7 @@ final class ApiRoutes {
     private final PreferenceService preferences;
     private final AuthService auth;
 
-    ApiRoutes(
+    public ApiRoutes(
             DictionaryService dictionary,
             FlashcardService flashcards,
             MnemonicService mnemonics,
@@ -37,7 +37,7 @@ final class ApiRoutes {
         this.auth = auth;
     }
 
-    void handle(HttpExchange exchange, String path, String rawPath, Map<String, String> params)
+    public void handle(HttpExchange exchange, String path, String rawPath, Map<String, String> params)
             throws IOException, SQLException {
         String method = exchange.getRequestMethod();
         if ("OPTIONS".equals(method)) {
@@ -92,7 +92,7 @@ final class ApiRoutes {
         }
 
         if (path.startsWith("/api/preferences")) {
-            sendStub(exchange, preferences.notImplemented(operation(method, path)));
+            handlePreferences(exchange, method, path);
             return;
         }
 
@@ -146,6 +146,20 @@ final class ApiRoutes {
             }
 
             HttpHelper.sendJson(exchange, 404, Map.of("error", "Unknown auth route"));
+        } catch (AuthException ex) {
+            HttpHelper.sendJson(exchange, ex.status(), Map.of("error", ex.getMessage()));
+        }
+    }
+
+    private void handlePreferences(HttpExchange exchange, String method, String path) throws IOException, SQLException {
+        try {
+            AuthService.SessionContext session = auth.requireSession(HttpHelper.bearerToken(exchange));
+            if (isGet(method, path, "/api/preferences")) {
+                HttpHelper.sendJson(exchange, 200, preferences.overview(session));
+                return;
+            }
+
+            sendStub(exchange, preferences.notImplemented(operation(method, path)));
         } catch (AuthException ex) {
             HttpHelper.sendJson(exchange, ex.status(), Map.of("error", ex.getMessage()));
         }

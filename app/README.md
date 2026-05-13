@@ -91,6 +91,37 @@ java -version
 mvn -version
 ```
 
+Run unit tests:
+
+```bash
+cd app/backend
+mvn test
+```
+
+Run integration tests:
+
+```bash
+cd app/backend
+mvn verify
+```
+
+Integration tests use Failsafe and run classes named `*IntegTest`.
+They start the backend API in-process and use PostgreSQL for app-state tests.
+By default they use the same local database defaults as `app/scripts/dev.sh`:
+
+```text
+jdbc:postgresql://127.0.0.1:5432/hanzi_cardgen
+```
+
+You can override the integration database without changing backend defaults:
+
+```bash
+export HANZI_INTEG_DB_URL="jdbc:postgresql://127.0.0.1:5432/hanzi_cardgen_test"
+export HANZI_INTEG_DB_USER="$USER"
+export HANZI_INTEG_DB_PASSWORD=""
+mvn verify
+```
+
 Run the backend:
 
 Optionally, clean old jars from target

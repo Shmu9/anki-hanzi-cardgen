@@ -4,10 +4,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
-record AppConfig(Path dbPath, Path staticDir, String host, int port, String appDbUrl, String appDbUser, String appDbPassword) {
+public record AppConfig(Path dbPath, Path staticDir, String host, int port, String appDbUrl, String appDbUser, String appDbPassword) {
     static final int DEFAULT_PORT = 8766;
+    public static final String DEFAULT_POSTGRES_HOST = "127.0.0.1";
+    public static final String DEFAULT_POSTGRES_PORT = "5432";
+    public static final String DEFAULT_APP_DB_NAME = "hanzi_cardgen";
 
-    static AppConfig parse(String[] args) {
+    public static AppConfig parse(String[] args) {
         Path root = defaultRoot();
         Path db = root.resolve("dictionary/dict.sqlite3").normalize();
         Path staticDir = root.resolve("app/frontend/dist").normalize();

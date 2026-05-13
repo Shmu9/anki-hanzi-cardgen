@@ -32,8 +32,8 @@ public final class AuthService {
     private static final int PBKDF2_KEY_BITS = 256;
     private static final int SALT_BYTES = 16;
     private static final int SESSION_TOKEN_BYTES = 32;
-    private static final Duration SESSION_TTL = Duration.ofMinutes(20);
-    private static final Duration ABSOLUTE_SESSION_TTL = Duration.ofHours(12);
+    private static final Duration DEFAULT_SESSION_TTL = Duration.ofMinutes(20);
+    private static final Duration DEFAULT_ABSOLUTE_SESSION_TTL = Duration.ofHours(12);
     private static final Pattern EMAIL_PATTERN = Pattern.compile("^[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,63}$", Pattern.CASE_INSENSITIVE);
     private static final Pattern DISPLAY_NAME_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{3,20}$");
     private static final Pattern PASSWORD_NUMBER_OR_SYMBOL = Pattern.compile("[^A-Za-z]");
@@ -43,11 +43,17 @@ public final class AuthService {
     private final String dbUrl;
     private final String dbUser;
     private final String dbPassword;
+    private final AuthSettings settings;
 
     public AuthService(String dbUrl, String dbUser, String dbPassword) {
+        this(dbUrl, dbUser, dbPassword, AuthSettings.production());
+    }
+
+    public AuthService(String dbUrl, String dbUser, String dbPassword, AuthSettings settings) {
         this.dbUrl = normalizeJdbcUrl(dbUrl);
         this.dbUser = blankToNull(dbUser);
         this.dbPassword = blankToNull(dbPassword);
+        this.settings = Objects.requireNonNull(settings, "settings").validated();
         if (isConfigured()) {
             initializeSchema();
         }
@@ -140,6 +146,23 @@ public final class AuthService {
             payload.put("user", findUserById(conn, sessionUser.userId()));
             payload.put("session", session);
             return payload;
+        }
+    }
+
+    public SessionContext requireSession(String token) throws AuthException, SQLException {
+        requireConfigured();
+        if (blankToNull(token) == null) {
+            throw new AuthException(401, "Authentication required.");
+        }
+
+        try (Connection conn = connect()) {
+            SessionUser sessionUser = findSession(conn, token);
+            if (sessionUser == null) {
+                throw new AuthException(401, "Session expired. Sign in again to continue.");
+            }
+            touchUser(conn, sessionUser.userId());
+            Map<String, Object> session = refreshSession(conn, token, sessionUser.sessionId());
+            return new SessionContext(sessionUser.userId(), findUserById(conn, sessionUser.userId()), session);
         }
     }
 
@@ -267,8 +290,8 @@ public final class AuthService {
             statement.setString(2, hashToken(token));
             statement.setString(3, truncate(userAgent, 512));
             statement.setString(4, blankToNull(ipAddress));
-            statement.setLong(5, SESSION_TTL.toSeconds());
-            statement.setLong(6, ABSOLUTE_SESSION_TTL.toSeconds());
+            statement.setLong(5, settings.sessionTtl().toSeconds());
+            statement.setLong(6, settings.absoluteSessionTtl().toSeconds());
             try (ResultSet rows = statement.executeQuery()) {
                 rows.next();
                 Map<String, Object> session = sessionMap(rows);
@@ -312,7 +335,7 @@ public final class AuthService {
                   AND absolute_expires_at > now()
                 RETURNING id, user_id, created_at, expires_at, absolute_expires_at
                 """)) {
-            statement.setLong(1, SESSION_TTL.toSeconds());
+            statement.setLong(1, settings.sessionTtl().toSeconds());
             statement.setObject(2, sessionId);
             statement.setString(3, hashToken(token));
             try (ResultSet rows = statement.executeQuery()) {
@@ -532,6 +555,30 @@ public final class AuthService {
     private record StoredUser(UUID id, String passwordHash, Map<String, Object> user) {}
 
     private record SessionUser(UUID sessionId, UUID userId, Map<String, Object> session) {}
+
+    public record SessionContext(UUID userId, Map<String, Object> user, Map<String, Object> session) {}
+
+    public record AuthSettings(Duration sessionTtl, Duration absoluteSessionTtl) {
+        public static AuthSettings production() {
+            return new AuthSettings(DEFAULT_SESSION_TTL, DEFAULT_ABSOLUTE_SESSION_TTL);
+        }
+
+        private AuthSettings validated() {
+            if (sessionTtl == null || sessionTtl.isZero() || sessionTtl.isNegative()) {
+                throw new IllegalArgumentException("Session TTL must be positive.");
+            }
+            if (sessionTtl.compareTo(DEFAULT_SESSION_TTL) > 0) {
+                throw new IllegalArgumentException("Session TTL must not exceed 20 minutes.");
+            }
+            if (absoluteSessionTtl == null || absoluteSessionTtl.isZero() || absoluteSessionTtl.isNegative()) {
+                throw new IllegalArgumentException("Absolute session TTL must be positive.");
+            }
+            if (absoluteSessionTtl.compareTo(DEFAULT_ABSOLUTE_SESSION_TTL) > 0) {
+                throw new IllegalArgumentException("Absolute session TTL must not exceed 12 hours.");
+            }
+            return this;
+        }
+    }
 
     public static final class AuthException extends Exception {
         private final int status;
