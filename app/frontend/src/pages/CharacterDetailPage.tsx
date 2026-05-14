@@ -1,27 +1,31 @@
 import type { FormEvent } from "react";
 import { EntryDetail } from "../components/EntryDetail";
-import type { EntryResponse } from "../types";
+import type { ComponentMeaningPreference, EntryResponse } from "../types";
 
 interface CharacterDetailPageProps {
     detailLookup: string;
     entry: EntryResponse | null;
+    componentMeanings: ComponentMeaningPreference[];
     rawVisible: boolean;
     onDetailLookupChange: (value: string) => void;
     onSubmitDetailLookup: (event: FormEvent<HTMLFormElement>) => void;
     onToggleRaw: () => void;
     onOpenDetail: (glyph: string) => void;
     onCreateCard: (glyph?: string) => void;
+    onOpenGlyphDefinitions: (glyph: string) => void;
 }
 
 export function CharacterDetailPage({
     detailLookup,
     entry,
+    componentMeanings,
     rawVisible,
     onDetailLookupChange,
     onSubmitDetailLookup,
     onToggleRaw,
     onOpenDetail,
     onCreateCard,
+    onOpenGlyphDefinitions,
 }: CharacterDetailPageProps) {
     return (
         <main className="page-content detail-page">
@@ -49,7 +53,14 @@ export function CharacterDetailPage({
                     </button>
                 </form>
             </section>
-            <EntryDetail payload={entry} rawVisible={rawVisible} onSelectGlyph={onOpenDetail} onCreateCard={onCreateCard} />
+            <EntryDetail
+                payload={entry}
+                componentMeanings={componentMeanings}
+                rawVisible={rawVisible}
+                onSelectGlyph={onOpenDetail}
+                onCreateCard={onCreateCard}
+                onOpenGlyphDefinitions={onOpenGlyphDefinitions}
+            />
         </main>
     );
 }

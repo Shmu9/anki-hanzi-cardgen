@@ -1,5 +1,16 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getEntry, getMetadata, getSession, registerAccount, searchGlyphs, signIn, signOut } from "./api";
+import {
+    getComponentMeanings,
+    getEntry,
+    getMetadata,
+    getPreferenceOverview,
+    getSession,
+    registerAccount,
+    saveComponentMeaningSet,
+    searchGlyphs,
+    signIn,
+    signOut,
+} from "./api";
 import { CharacterDetailPage } from "./pages/CharacterDetailPage";
 import { CreatePage } from "./pages/CreatePage";
 import { ExplorePage } from "./pages/ExplorePage";
@@ -8,10 +19,21 @@ import { PreferencesPage } from "./pages/PreferencesPage";
 import { RegisterPage } from "./pages/RegisterPage";
 import { SignInPage } from "./pages/SignInPage";
 import { navItems, pages, type Page, type RouteState } from "./routes";
-import type { AuthResponse, AuthSession, AuthUser, EntryResponse, GlyphRow, MetadataResponse, SearchFilters } from "./types";
+import type {
+    AuthResponse,
+    AuthSession,
+    AuthUser,
+    ComponentMeaningPreference,
+    EntryResponse,
+    GlyphRow,
+    MetadataResponse,
+    SearchFilters,
+    StandardDefinitionPreference,
+} from "./types";
 
 const SESSION_TOKEN_KEY = "hanzi.sessionToken";
 const SESSION_WARNING_MS = 2 * 60 * 1000;
+const MAX_USER_DEFINITION_LENGTH = 50;
 
 const initialFilters: SearchFilters = {
     q: "",
@@ -21,7 +43,7 @@ const initialFilters: SearchFilters = {
 };
 
 export default function App() {
-    const [route, setRouteState] = useState<RouteState>(() => parseHashRoute());
+    const [route, setRouteState] = useState<RouteState>(() => parseRoute());
     const [filters, setFilters] = useState<SearchFilters>(initialFilters);
     const [metadata, setMetadata] = useState<MetadataResponse | null>(null);
     const [results, setResults] = useState<GlyphRow[]>([]);
@@ -37,19 +59,26 @@ export default function App() {
     const [authMessage, setAuthMessage] = useState("");
     const [authBusy, setAuthBusy] = useState(false);
     const [sessionWarningVisible, setSessionWarningVisible] = useState(false);
+    const [componentMeanings, setComponentMeanings] = useState<ComponentMeaningPreference[]>([]);
+    const [allComponentMeanings, setAllComponentMeanings] = useState<ComponentMeaningPreference[]>([]);
+    const [standardDefinitionPreferences, setStandardDefinitionPreferences] = useState<StandardDefinitionPreference[]>([]);
+    const [preferenceBusy, setPreferenceBusy] = useState(false);
+    const [preferenceMessage, setPreferenceMessage] = useState("");
     const refreshingSessionRef = useRef(false);
 
     useEffect(() => {
-        const syncFromHash = () => {
-            const next = parseHashRoute();
+        const syncFromLocation = () => {
+            const next = parseRoute();
             setRouteState(next);
             if (next.glyph) {
                 setDetailLookup(next.glyph);
             }
         };
 
-        window.addEventListener("hashchange", syncFromHash);
-        return () => window.removeEventListener("hashchange", syncFromHash);
+        window.addEventListener("popstate", syncFromLocation);
+        return () => {
+            window.removeEventListener("popstate", syncFromLocation);
+        };
     }, []);
 
     useEffect(() => {
@@ -64,6 +93,10 @@ export default function App() {
         setAuthUser(null);
         setAuthSession(null);
         setSessionWarningVisible(false);
+        setComponentMeanings([]);
+        setAllComponentMeanings([]);
+        setStandardDefinitionPreferences([]);
+        setPreferenceMessage("");
         setAuthMessage(message);
     }, []);
 
@@ -134,6 +167,9 @@ export default function App() {
 
     useEffect(() => {
         if (!authToken || !authUser) {
+            setComponentMeanings([]);
+            setAllComponentMeanings([]);
+            setStandardDefinitionPreferences([]);
             return;
         }
         const actionEvents = ["click", "keydown", "change", "submit"];
@@ -145,6 +181,55 @@ export default function App() {
             actionEvents.forEach((eventName) => window.removeEventListener(eventName, onAction, true));
         };
     }, [authToken, authUser, refreshSession]);
+
+    useEffect(() => {
+        const glyph = entry?.entry.glyph;
+        if (!authToken || !authUser || !glyph) {
+            setComponentMeanings([]);
+            setPreferenceMessage("");
+            return;
+        }
+        let isCurrent = true;
+        getComponentMeanings(glyph, authToken)
+            .then((payload) => {
+                if (isCurrent) {
+                    setComponentMeanings(payload.componentMeanings);
+                    setPreferenceMessage("");
+                }
+            })
+            .catch((err: Error) => {
+                if (isCurrent) {
+                    setComponentMeanings([]);
+                    setPreferenceMessage(err.message);
+                }
+            });
+        return () => {
+            isCurrent = false;
+        };
+    }, [authToken, authUser, entry?.entry.glyph]);
+
+    useEffect(() => {
+        if (!authToken || route.page !== "preferences") {
+            return;
+        }
+        let isCurrent = true;
+        getPreferenceOverview(authToken)
+            .then((payload) => {
+                if (isCurrent) {
+                    setAllComponentMeanings(payload.componentMeanings);
+                    setStandardDefinitionPreferences(payload.standardDefinitionPreferences);
+                    setPreferenceMessage("");
+                }
+            })
+            .catch((err: Error) => {
+                if (isCurrent) {
+                    setPreferenceMessage(err.message);
+                }
+            });
+        return () => {
+            isCurrent = false;
+        };
+    }, [authToken, route.page]);
 
     useEffect(() => {
         if (!authSession?.expiresAt) {
@@ -165,11 +250,12 @@ export default function App() {
     }, [authSession, clearAuth]);
 
     const setRoute = useCallback((next: RouteState) => {
-        const targetHash = formatHashRoute(next);
-        if (window.location.hash === targetHash) {
+        const targetPath = formatRoutePath(next);
+        if (window.location.pathname === targetPath) {
             setRouteState(next);
         } else {
-            window.location.hash = targetHash;
+            window.history.pushState(null, "", targetPath);
+            setRouteState(next);
         }
     }, []);
 
@@ -198,6 +284,13 @@ export default function App() {
                 setSelectedGlyph(glyph);
             }
             setRoute({ page: "create", glyph });
+        },
+        [setRoute],
+    );
+
+    const openGlyphDefinitions = useCallback(
+        (glyph: string) => {
+            setRoute({ page: "preferences", section: "glyphs-definitions", glyph });
         },
         [setRoute],
     );
@@ -256,6 +349,59 @@ export default function App() {
             openCharacterDetail(key);
         }
     };
+
+    const applyPreferencePayload = useCallback(
+        (glyph: string, preferences: ComponentMeaningPreference[], useStandardDefinitionInMnemonics?: boolean) => {
+            if (entry?.entry.glyph === glyph) {
+                setComponentMeanings(preferences);
+            }
+            setAllComponentMeanings((current) => [
+                ...current.filter((preference) => preference.componentGlyph !== glyph),
+                ...preferences,
+            ]);
+            if (useStandardDefinitionInMnemonics !== undefined) {
+                setStandardDefinitionPreferences((current) => [
+                    ...current.filter((preference) => preference.componentGlyph !== glyph),
+                    ...(useStandardDefinitionInMnemonics
+                        ? [{ componentGlyph: glyph, useInMnemonics: true, updatedAt: new Date().toISOString() }]
+                        : []),
+                ]);
+            }
+        },
+        [entry?.entry.glyph],
+    );
+
+    const saveGlyphDefinitionSet = useCallback(
+        async (
+            glyph: string,
+            definitions: Array<{ id?: string; meaning: string; componentToken?: string | null; notes?: string | null; useInMnemonics?: boolean }>,
+            useStandardDefinitionInMnemonics: boolean,
+        ) => {
+            if (!authToken || !authUser) {
+                setPreferenceMessage("Sign in to save user definitions.");
+                setRoute({ page: "auth" });
+                return false;
+            }
+            if (definitions.some((definition) => definition.meaning.trim().length > MAX_USER_DEFINITION_LENGTH)) {
+                setPreferenceMessage(`User definitions must be ${MAX_USER_DEFINITION_LENGTH} characters or fewer.`);
+                return false;
+            }
+            setPreferenceBusy(true);
+            setPreferenceMessage("");
+            try {
+                const payload = await saveComponentMeaningSet(glyph, definitions, useStandardDefinitionInMnemonics, authToken);
+                applyPreferencePayload(glyph, payload.componentMeanings, payload.useStandardDefinitionInMnemonics ?? useStandardDefinitionInMnemonics);
+                setPreferenceMessage("Saved glyph definitions.");
+                return true;
+            } catch (err) {
+                setPreferenceMessage(err instanceof Error ? err.message : "Could not save glyph definitions.");
+                return false;
+            } finally {
+                setPreferenceBusy(false);
+            }
+        },
+        [applyPreferencePayload, authToken, authUser, setRoute],
+    );
 
     const submitSignIn = useCallback(
         async (input: { identifier: string; password: string }) => {
@@ -322,6 +468,17 @@ export default function App() {
         [authUser],
     );
 
+    const activeStandardDefinitionPreference = useMemo(() => {
+        if (route.section !== "glyphs-definitions" || !route.glyph) {
+            return false;
+        }
+        return Boolean(standardDefinitionPreferences.find((preference) => preference.componentGlyph === route.glyph)?.useInMnemonics);
+    }, [route.glyph, route.section, standardDefinitionPreferences]);
+
+    const activeStandardDefinition = route.section === "glyphs-definitions" && route.glyph && entry?.entry.glyph === route.glyph
+        ? entry.entry.k_definition ?? ""
+        : "";
+
     return (
         <div className="site-shell">
             <header className="top-bar">
@@ -366,12 +523,14 @@ export default function App() {
                     rawVisible={rawVisible}
                     error={error}
                     entry={entry}
+                    componentMeanings={componentMeanings}
                     onFiltersChange={setFilters}
                     onSearchSubmit={() => runSearch()}
                     onSelectGlyph={selectGlyph}
                     onToggleRaw={() => setRawVisible((visible) => !visible)}
                     onOpenDetail={openCharacterDetail}
                     onCreateCard={openCreatePage}
+                    onOpenGlyphDefinitions={openGlyphDefinitions}
                 />
             ) : null}
 
@@ -379,19 +538,36 @@ export default function App() {
                 <CharacterDetailPage
                     detailLookup={detailLookup}
                     entry={entry}
+                    componentMeanings={componentMeanings}
                     rawVisible={rawVisible}
                     onDetailLookupChange={setDetailLookup}
                     onSubmitDetailLookup={submitDetailLookup}
                     onToggleRaw={() => setRawVisible((visible) => !visible)}
                     onOpenDetail={openCharacterDetail}
                     onCreateCard={openCreatePage}
+                    onOpenGlyphDefinitions={openGlyphDefinitions}
                 />
             ) : null}
 
             {route.page === "create" ? <CreatePage selectedGlyph={route.glyph ?? selectedGlyph ?? ""} onOpenExplorer={() => setRoute({ page: "explore" })} /> : null}
 
             {route.page === "preferences" ? (
-                <PreferencesPage user={authUser} isBusy={authBusy} message={authMessage} onSignOut={submitSignOut} onSignIn={() => setRoute({ page: "auth" })} />
+                <PreferencesPage
+                    user={authUser}
+                    isGlyphDefinitionsPage={route.section === "glyphs-definitions"}
+                    activeGlyph={route.section === "glyphs-definitions" ? route.glyph : undefined}
+                    standardDefinition={activeStandardDefinition}
+                    useStandardDefinitionInMnemonics={activeStandardDefinitionPreference}
+                    allPreferences={allComponentMeanings}
+                    isBusy={authBusy || preferenceBusy}
+                    message={preferenceMessage || authMessage}
+                    onSignOut={submitSignOut}
+                    onSignIn={() => setRoute({ page: "auth" })}
+                    onOpenGlyph={openGlyphDefinitions}
+                    onBackToPreferences={() => setRoute({ page: "preferences", section: "glyphs-definitions" })}
+                    onOpenDetail={openCharacterDetail}
+                    onSaveDefinitions={saveGlyphDefinitionSet}
+                />
             ) : null}
 
             {route.page === "auth" ? (
@@ -429,17 +605,20 @@ export default function App() {
     );
 }
 
-function parseHashRoute(): RouteState {
-    const cleaned = window.location.hash.replace(/^#\/?/, "");
+function parseRoute(): RouteState {
+    const cleaned = window.location.pathname.replace(/^\/?/, "");
     const [rawPage, ...parts] = cleaned.split("/");
     const page = isPage(rawPage) ? rawPage : "home";
-    const glyph = parts.length ? decodeURIComponent(parts.join("/")) : undefined;
-    return { page, glyph };
+    const section = page === "preferences" && parts[0] ? decodeURIComponent(parts[0]) : undefined;
+    const glyphParts = section ? parts.slice(1) : parts;
+    const glyph = glyphParts.length ? decodeURIComponent(glyphParts.join("/")) : undefined;
+    return { page, section, glyph };
 }
 
-function formatHashRoute(route: RouteState): string {
+function formatRoutePath(route: RouteState): string {
+    const section = route.section ? `/${encodeURIComponent(route.section)}` : "";
     const glyph = route.glyph ? `/${encodeURIComponent(route.glyph)}` : "";
-    return `#/${route.page}${glyph}`;
+    return `/${route.page}${section}${glyph}`;
 }
 
 function isPage(value: string): value is Page {

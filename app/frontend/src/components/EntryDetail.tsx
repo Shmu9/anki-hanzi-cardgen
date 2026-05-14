@@ -1,16 +1,26 @@
 import { compactDefinition, text } from "../format";
-import type { BaseComponent, DecompositionNode, EntryResponse, ReuseRow } from "../types";
+import type { BaseComponent, ComponentMeaningPreference, DecompositionNode, EntryResponse, ReuseRow } from "../types";
 import type { CSSProperties } from "react";
 
 interface EntryDetailProps {
     payload: EntryResponse | null;
+    componentMeanings?: ComponentMeaningPreference[];
     rawVisible: boolean;
     onSelectGlyph: (glyph: string) => void;
     onOpenDetail?: (glyph: string) => void;
     onCreateCard?: (glyph: string) => void;
+    onOpenGlyphDefinitions?: (glyph: string) => void;
 }
 
-export function EntryDetail({ payload, rawVisible, onSelectGlyph, onOpenDetail, onCreateCard }: EntryDetailProps) {
+export function EntryDetail({
+    payload,
+    componentMeanings = [],
+    rawVisible,
+    onSelectGlyph,
+    onOpenDetail,
+    onCreateCard,
+    onOpenGlyphDefinitions,
+}: EntryDetailProps) {
     if (!payload) {
         return (
             <section className="detail-pane">
@@ -69,6 +79,21 @@ export function EntryDetail({ payload, rawVisible, onSelectGlyph, onOpenDetail, 
                 <section className="definition-band">
                     <h3>Definition</h3>
                     <p>{text(entry.k_definition, "No definition available.")}</p>
+                    {componentMeanings.length ? (
+                        <div className="user-definition-list" aria-label="User preferred definitions">
+                            {componentMeanings.map((preference, index) => (
+                                <div className="user-definition" key={preference.id}>
+                                    <span>User #{index + 1}</span>
+                                    <strong>{preference.meaning}</strong>
+                                </div>
+                            ))}
+                        </div>
+                    ) : null}
+                    {entry.glyph && onOpenGlyphDefinitions ? (
+                        <button className="secondary-button definition-link-button" type="button" onClick={() => onOpenGlyphDefinitions(entry.glyph!)}>
+                            Edit user definitions
+                        </button>
+                    ) : null}
                 </section>
 
                 <section className="metric-grid">

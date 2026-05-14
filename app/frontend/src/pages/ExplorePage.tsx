@@ -1,6 +1,6 @@
 import { EntryDetail } from "../components/EntryDetail";
 import { SearchPane } from "../components/SearchPane";
-import type { EntryResponse, GlyphRow, MetadataResponse, SearchFilters } from "../types";
+import type { ComponentMeaningPreference, EntryResponse, GlyphRow, MetadataResponse, SearchFilters } from "../types";
 
 interface ExplorePageProps {
     filters: SearchFilters;
@@ -11,12 +11,14 @@ interface ExplorePageProps {
     rawVisible: boolean;
     error: string | null;
     entry: EntryResponse | null;
+    componentMeanings: ComponentMeaningPreference[];
     onFiltersChange: (filters: SearchFilters) => void;
     onSearchSubmit: () => void;
     onSelectGlyph: (glyph: string) => void;
     onToggleRaw: () => void;
     onOpenDetail: (glyph: string) => void;
     onCreateCard: (glyph?: string) => void;
+    onOpenGlyphDefinitions: (glyph: string) => void;
 }
 
 export function ExplorePage({
@@ -28,12 +30,14 @@ export function ExplorePage({
     rawVisible,
     error,
     entry,
+    componentMeanings,
     onFiltersChange,
     onSearchSubmit,
     onSelectGlyph,
     onToggleRaw,
     onOpenDetail,
     onCreateCard,
+    onOpenGlyphDefinitions,
 }: ExplorePageProps) {
     return (
         <main className="app-shell">
@@ -52,10 +56,12 @@ export function ExplorePage({
             />
             <EntryDetail
                 payload={entry}
+                componentMeanings={componentMeanings}
                 rawVisible={rawVisible}
                 onSelectGlyph={onSelectGlyph}
                 onOpenDetail={onOpenDetail}
                 onCreateCard={onCreateCard}
+                onOpenGlyphDefinitions={onOpenGlyphDefinitions}
             />
         </main>
     );

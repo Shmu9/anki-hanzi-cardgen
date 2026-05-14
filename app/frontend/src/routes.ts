@@ -2,6 +2,7 @@ export type Page = "home" | "explore" | "detail" | "create" | "preferences" | "a
 
 export interface RouteState {
     page: Page;
+    section?: string;
     glyph?: string;
 }
 

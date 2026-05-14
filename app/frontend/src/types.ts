@@ -75,6 +75,44 @@ export interface EntryResponse {
     referenced_by: ReuseRow[];
 }
 
+export interface ComponentMeaningPreference {
+    id: string;
+    componentGlyph: string;
+    componentToken: Nullable<string>;
+    meaning: string;
+    rank: number;
+    isPrimary: boolean;
+    useInMnemonics: boolean;
+    notes: Nullable<string>;
+    createdAt: string;
+    updatedAt: string;
+}
+
+export interface StandardDefinitionPreference {
+    componentGlyph: string;
+    useInMnemonics: boolean;
+    updatedAt: string;
+}
+
+export interface ComponentMeaningResponse {
+    componentMeanings: ComponentMeaningPreference[];
+    useStandardDefinitionInMnemonics?: boolean;
+}
+
+export interface PreferenceOverviewResponse {
+    implemented: boolean;
+    userId: string;
+    user: AuthUser;
+    session: AuthSession;
+    mnemonicProfile: {
+        name: string;
+        structure: string;
+        toneHints: string;
+    };
+    componentMeanings: ComponentMeaningPreference[];
+    standardDefinitionPreferences: StandardDefinitionPreference[];
+}
+
 export interface SearchFilters {
     q: string;
     hsk: string;
