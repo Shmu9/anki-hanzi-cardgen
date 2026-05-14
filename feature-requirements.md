@@ -57,14 +57,23 @@ The system must:
 - persist user-specific study preferences separately from shared dictionary content
 - let each user maintain preferred meanings for radicals and recurring components
 - allow more than one preferred meaning per radical
+- allow a maximum of five alternate user definitions per radical, component, or glyph
+- show saved user definitions beneath the standard dictionary definition on explorer and character dictionary pages, highlighted as user preferences and laid out horizontally with vertical overflow when needed
 - track which preference set was used to generate each mnemonic
 
 The system should:
 
 - allow users to rank alternate radical meanings
+- keep ranking, editing, deletion, and mnemonic-use controls on the profile/preferences page rather than the explorer or dictionary detail views
+- provide glyph-definition preference routes such as `/preferences/glyphs-definitions/阝`
+- let the glyph-definition preference route show the top zero to five saved user definitions for the selected glyph
+- let users add, modify, delete, and reorder saved glyph definitions from the glyph-definition preference route
+- let users mark up to three saved definitions for a glyph to always be used in mnemonic generation
+- default mnemonic generation to the standard dictionary definition when no saved definition is marked for mnemonic use
 - allow users to maintain notes about why they prefer a given interpretation
 - let users define multiple mnemonic generation profiles
 - let users choose from sample mnemonic structure templates
+- have preferences editable locally (frontend) and be sent by clicking a "save" button to update the db in one transaction
 
 ## 0a. Authentication and Session Management
 
@@ -245,6 +254,8 @@ The system must:
 - clearly label generated mnemonics as synthetic
 - allow manual editing of all mnemonic text
 - generate mnemonics using the current user's saved radical/component meanings
+- use at most three user-selected preferred definitions per glyph as always-on mnemonic inputs
+- fall back to the standard dictionary definition for mnemonic input when no saved glyph definition is marked for mnemonic use
 - preserve the prompt inputs or a stable snapshot of the user preferences used
 - support selectable mnemonic structure templates that influence prompt construction
 - support retrying mnemonic generation runs
