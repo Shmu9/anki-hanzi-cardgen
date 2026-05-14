@@ -61,7 +61,7 @@ public final class HanziCardgenServer {
                 new FlashcardService(),
                 new MnemonicService(),
                 new AnkiSyncService(),
-                new PreferenceService(),
+                new PreferenceService(config.appDbUrl(), config.appDbUser(), config.appDbPassword()),
                 new AuthService(config.appDbUrl(), config.appDbUser(), config.appDbPassword()));
         return new HanziCardgenServer(apiRoutes, new StaticFileHandler(config.staticDir()));
     }

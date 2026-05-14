@@ -8,6 +8,7 @@ import com.hanzi.app.services.DictionaryService;
 import com.hanzi.app.services.FlashcardService;
 import com.hanzi.app.services.MnemonicService;
 import com.hanzi.app.services.PreferenceService;
+import com.hanzi.app.services.PreferenceService.PreferenceException;
 import com.hanzi.app.utils.HttpHelper;
 import java.io.IOException;
 import java.sql.SQLException;
@@ -92,7 +93,7 @@ public final class ApiRoutes {
         }
 
         if (path.startsWith("/api/preferences")) {
-            handlePreferences(exchange, method, path);
+            handlePreferences(exchange, method, path, params);
             return;
         }
 
@@ -151,7 +152,8 @@ public final class ApiRoutes {
         }
     }
 
-    private void handlePreferences(HttpExchange exchange, String method, String path) throws IOException, SQLException {
+    private void handlePreferences(HttpExchange exchange, String method, String path, Map<String, String> params)
+            throws IOException, SQLException {
         try {
             AuthService.SessionContext session = auth.requireSession(HttpHelper.bearerToken(exchange));
             if (isGet(method, path, "/api/preferences")) {
@@ -159,8 +161,45 @@ public final class ApiRoutes {
                 return;
             }
 
+            if (isGet(method, path, "/api/preferences/radicals")) {
+                HttpHelper.sendJson(exchange, 200, preferences.componentMeaningsPayload(session, params.get("glyph")));
+                return;
+            }
+
+            if ("POST".equals(method) && "/api/preferences/radicals".equals(path)) {
+                HttpHelper.sendJson(exchange, 201, preferences.saveComponentMeaning(session, HttpHelper.readJsonObject(exchange)));
+                return;
+            }
+
+            if ("PUT".equals(method) && path.startsWith("/api/preferences/radicals/")) {
+                String glyph = HttpHelper.decodePath(path.substring("/api/preferences/radicals/".length()));
+                Map<String, Object> request = HttpHelper.readJsonObject(exchange);
+                if (request.containsKey("definitions")) {
+                    HttpHelper.sendJson(exchange, 200, preferences.replaceComponentMeanings(session, glyph, request));
+                } else {
+                    HttpHelper.sendJson(exchange, 200, preferences.rankComponentMeanings(session, glyph, request));
+                }
+                return;
+            }
+
+            if ("PATCH".equals(method) && path.startsWith("/api/preferences/radicals/")) {
+                PreferencePath preferencePath = preferencePath(path);
+                HttpHelper.sendJson(exchange, 200, preferences.updateComponentMeaning(
+                        session, preferencePath.glyph(), preferencePath.preferenceId(), HttpHelper.readJsonObject(exchange)));
+                return;
+            }
+
+            if ("DELETE".equals(method) && path.startsWith("/api/preferences/radicals/")) {
+                PreferencePath preferencePath = preferencePath(path);
+                HttpHelper.sendJson(exchange, 200, preferences.deleteComponentMeaning(
+                        session, preferencePath.glyph(), preferencePath.preferenceId()));
+                return;
+            }
+
             sendStub(exchange, preferences.notImplemented(operation(method, path)));
         } catch (AuthException ex) {
+            HttpHelper.sendJson(exchange, ex.status(), Map.of("error", ex.getMessage()));
+        } catch (PreferenceException ex) {
             HttpHelper.sendJson(exchange, ex.status(), Map.of("error", ex.getMessage()));
         }
     }
@@ -189,4 +228,13 @@ public final class ApiRoutes {
     private static String operation(String method, String path) {
         return method + " " + path;
     }
+
+    private static PreferencePath preferencePath(String path) {
+        String suffix = path.substring("/api/preferences/radicals/".length());
+        String[] pieces = suffix.split("/", 2);
+        String preferenceId = pieces.length > 1 ? HttpHelper.decodePath(pieces[1]) : "";
+        return new PreferencePath(HttpHelper.decodePath(pieces[0]), preferenceId);
+    }
+
+    private record PreferencePath(String glyph, String preferenceId) {}
 }

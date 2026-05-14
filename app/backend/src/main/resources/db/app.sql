@@ -76,9 +76,10 @@ CREATE TABLE IF NOT EXISTS user_component_meanings (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     component_glyph TEXT NOT NULL CHECK (component_glyph <> ''),
     component_token TEXT,
-    meaning TEXT NOT NULL CHECK (meaning <> ''),
+    meaning TEXT NOT NULL CHECK (meaning <> '' AND char_length(meaning) <= 50),
     rank INTEGER NOT NULL CHECK (rank BETWEEN 0 AND 4),
     is_primary BOOLEAN NOT NULL DEFAULT false,
+    use_in_mnemonics BOOLEAN NOT NULL DEFAULT false,
     notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -90,6 +91,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_user_component_meanings_one_primary
     ON user_component_meanings(user_id, component_glyph)
     WHERE is_primary;
 
+ALTER TABLE user_component_meanings
+    ADD COLUMN IF NOT EXISTS use_in_mnemonics BOOLEAN NOT NULL DEFAULT false;
+
 CREATE INDEX IF NOT EXISTS idx_user_component_meanings_lookup
     ON user_component_meanings(user_id, rank ASC, component_glyph)
-    INCLUDE (meaning, is_primary);
+    INCLUDE (meaning, is_primary, use_in_mnemonics);
+
+CREATE TABLE IF NOT EXISTS user_standard_definition_preferences (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    component_glyph TEXT NOT NULL CHECK (component_glyph <> ''),
+    use_in_mnemonics BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, component_glyph)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_standard_definition_preferences_lookup
+    ON user_standard_definition_preferences(user_id, component_glyph)
+    WHERE use_in_mnemonics;
