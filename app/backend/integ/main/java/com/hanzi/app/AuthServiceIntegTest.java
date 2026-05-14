@@ -62,7 +62,10 @@ public class AuthServiceIntegTest {
                 new FlashcardService(),
                 new MnemonicService(),
                 new AnkiSyncService(),
-                new PreferenceService(),
+                new PreferenceService(
+                        dbUrl(),
+                        firstEnv("HANZI_INTEG_DB_USER", "HANZI_APP_DB_USER", "PGUSER"),
+                        firstEnv("HANZI_INTEG_DB_PASSWORD", "HANZI_APP_DB_PASSWORD", "PGPASSWORD")),
                 auth);
 
         server = HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
@@ -107,6 +110,68 @@ public class AuthServiceIntegTest {
         assertEquals(200, response.status());
         assertEquals(true, response.body().get("implemented"));
         assertEquals(registered.userId(), response.body().get("userId"));
+    }
+
+    @Test
+    public void activeSessionCanSaveAndRankComponentMeanings() throws Exception {
+        RegisteredUser registered = registerUniqueUser();
+
+        JsonResponse first = postJson("/api/preferences/radicals",
+                Map.of("glyph", "良", "meaning", "good, fine"), registered.token());
+        assertEquals(201, first.status());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> firstMeanings = (List<Map<String, Object>>) first.body().get("componentMeanings");
+        assertEquals(1, firstMeanings.size());
+        assertEquals("良", firstMeanings.getFirst().get("componentGlyph"));
+        assertEquals("good, fine", firstMeanings.getFirst().get("meaning"));
+        assertEquals(true, firstMeanings.getFirst().get("isPrimary"));
+
+        JsonResponse second = postJson("/api/preferences/radicals",
+                Map.of("glyph", "良", "meaning", "wholesome"), registered.token());
+        assertEquals(201, second.status());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> secondMeanings = (List<Map<String, Object>>) second.body().get("componentMeanings");
+        assertEquals(2, secondMeanings.size());
+
+        JsonResponse bulkSaved = putJson("/api/preferences/radicals/%E8%89%AF", Map.of(
+                "useStandardDefinitionInMnemonics", true,
+                "definitions", List.of(
+                        Map.of("id", secondMeanings.get(1).get("id").toString(), "meaning", "wholesome", "useInMnemonics", true),
+                        Map.of("id", secondMeanings.get(0).get("id").toString(), "meaning", "good, fine", "useInMnemonics", false)
+                )), registered.token());
+        assertEquals(200, bulkSaved.status());
+        assertEquals(true, bulkSaved.body().get("useStandardDefinitionInMnemonics"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> bulkMeanings = (List<Map<String, Object>>) bulkSaved.body().get("componentMeanings");
+        assertEquals("wholesome", bulkMeanings.getFirst().get("meaning"));
+        assertEquals(true, bulkMeanings.getFirst().get("useInMnemonics"));
+
+        List<String> reversedIds = List.of(bulkMeanings.get(0).get("id").toString(), bulkMeanings.get(1).get("id").toString());
+        JsonResponse ranked = putJson("/api/preferences/radicals/%E8%89%AF", Map.of("ids", reversedIds), registered.token());
+
+        assertEquals(200, ranked.status());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rankedMeanings = (List<Map<String, Object>>) ranked.body().get("componentMeanings");
+        assertEquals("wholesome", rankedMeanings.getFirst().get("meaning"));
+        assertEquals(0, rankedMeanings.getFirst().get("rank"));
+        assertEquals(true, rankedMeanings.getFirst().get("isPrimary"));
+
+        String firstId = rankedMeanings.getFirst().get("id").toString();
+        JsonResponse updated = patchJson("/api/preferences/radicals/%E8%89%AF/" + firstId,
+                Map.of("meaning", "good and wholesome", "useInMnemonics", true), registered.token());
+
+        assertEquals(200, updated.status());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> updatedMeanings = (List<Map<String, Object>>) updated.body().get("componentMeanings");
+        assertEquals("good and wholesome", updatedMeanings.getFirst().get("meaning"));
+        assertEquals(true, updatedMeanings.getFirst().get("useInMnemonics"));
+
+        JsonResponse deleted = deleteJson("/api/preferences/radicals/%E8%89%AF/" + firstId, registered.token());
+
+        assertEquals(200, deleted.status());
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> remainingMeanings = (List<Map<String, Object>>) deleted.body().get("componentMeanings");
+        assertEquals(1, remainingMeanings.size());
     }
 
     @Test
@@ -185,6 +250,34 @@ public class AuthServiceIntegTest {
         HttpRequest.Builder request = HttpRequest.newBuilder(baseUri.resolve(path))
                 .header("Content-Type", "application/json")
                 .POST(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(payload)));
+        if (token != null) {
+            request.header("Authorization", "Bearer " + token);
+        }
+        return send(request.build());
+    }
+
+    private JsonResponse putJson(String path, Object payload, String token) throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(baseUri.resolve(path))
+                .header("Content-Type", "application/json")
+                .PUT(HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(payload)));
+        if (token != null) {
+            request.header("Authorization", "Bearer " + token);
+        }
+        return send(request.build());
+    }
+
+    private JsonResponse patchJson(String path, Object payload, String token) throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(baseUri.resolve(path))
+                .header("Content-Type", "application/json")
+                .method("PATCH", HttpRequest.BodyPublishers.ofString(MAPPER.writeValueAsString(payload)));
+        if (token != null) {
+            request.header("Authorization", "Bearer " + token);
+        }
+        return send(request.build());
+    }
+
+    private JsonResponse deleteJson(String path, String token) throws Exception {
+        HttpRequest.Builder request = HttpRequest.newBuilder(baseUri.resolve(path)).DELETE();
         if (token != null) {
             request.header("Authorization", "Bearer " + token);
         }
